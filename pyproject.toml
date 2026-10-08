@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uihound"
+version = "0.1.0"
+description = "Browser-based Android UI inspector for HIL testing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.5,<3.0",
+    "uvicorn[standard]>=0.27,<1.0",
+    "uiautomator2>=3.2,<4.0",
+    "adbutils>=2.0,<3.0",
+    "lxml>=4.9,<7",
+    "Pillow>=10.0,<12.0",
+]
+
+[project.scripts]
+uihound = "uihound.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+uihound = ["static/*"]

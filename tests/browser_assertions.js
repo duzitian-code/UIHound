@@ -1,0 +1,290 @@
+const assert = (condition, message) => { if (!condition) throw Error(message); };
+const tick = () => new Promise(resolve => setTimeout(resolve, 80));
+const click = async id => {
+  document.getElementById(id).click();
+  await tick();
+  const started = Date.now();
+  while ((state.capturing || state.savingRegion || (state.recorder?.pending && !state.recorder.active)) && Date.now() - started < 10000) await tick();
+};
+const captures = () => fixtureRequests.filter(item => item.url === '/internal/capture').length;
+function pointer(type, x, y, target = $('#screen-stage')) {
+  const rect = $('#screen-canvas').getBoundingClientRect();
+  target.dispatchEvent(new PointerEvent(type, {
+    clientX: rect.left + rect.width * x, clientY: rect.top + rect.height * y,
+    pointerId: 1, button: 0, bubbles: true,
+  }));
+}
+function key(value, shiftKey = false) {
+  $('#screen-stage').dispatchEvent(new KeyboardEvent('keydown', {key: value, shiftKey, bubbles: true}));
+}
+async function recordFrames(minimumDuration = 0) {
+  const started = performance.now();
+  const deadline = started + 6000;
+  while ((!state.recorder.bytes || performance.now() - started < minimumDuration) && performance.now() < deadline) {
+    state.recorder.draw(fixtureImage);
+    await tick();
+  }
+  assert(state.recorder.bytes > 0, 'native encoder emitted video before stopping');
+}
+async function browserTests() {
+  document.body.dataset.phase = 'begin';
+  await tick();
+  for (const [kind, defaultPath] of [['snapshot', 'D:\\snapshots'], ['recording', 'D:\\recordings']]) {
+    const key = `uihound-${kind}-directory`;
+    assert($(`#${kind}-directory`).value === defaultPath, `${kind} restores new default after root change`);
+    assert(localStorage.getItem(key) === null, `${kind} discards invalid old path`);
+    localStorage.setItem(key, `${defaultPath}\\custom`);
+    assert(await restoreMediaDirectory(kind, defaultPath) === `${defaultPath}\\custom`, `${kind} preserves valid custom path`);
+    localStorage.removeItem(key);
+  }
+  await testRemoteTransport();
+  document.body.dataset.phase = 'native-codec';
+  await testNativeH264Decoder();
+  document.body.dataset.phase = 'connect';
+  assert($('#save-full').disabled, 'device controls start disabled');
+  $('#device-address').value = 'demo-device';
+  await click('connect-device');
+  await tick();
+  assert(state.connected && state.snapshotId && !state.capturing, 'connection captures hierarchy once');
+  assert(captures() === 1, 'one initial snapshot');
+  const overlayContext = $('#overlay-canvas').getContext('2d');
+  const boundaries = overlayContext.getImageData(78, 278, 930, 185).data;
+  assert(boundaries.some((value, index) => index % 4 === 3 && value > 0), 'hierarchy shows unselected element boundaries');
+  await click('toggle-bounds');
+  assert(!overlayContext.getImageData(78, 278, 930, 185).data.some((value, index) => index % 4 === 3 && value > 0), 'boundaries can be hidden');
+  await click('toggle-bounds');
+  const initialTheme = localStorage.getItem('uihound-theme');
+  assert(document.documentElement.dataset.theme === initialTheme, `saved theme restored on page load: ${initialTheme} -> ${document.documentElement.dataset.theme}`);
+  const initialBackground = getComputedStyle(document.body).backgroundColor;
+  const initialPixel = [...$('#screen-canvas').getContext('2d').getImageData(100, 100, 1, 1).data];
+  await click('theme-toggle');
+  assert(document.documentElement.dataset.theme !== initialTheme, 'theme toggle switches appearance');
+  assert(getComputedStyle(document.body).backgroundColor !== initialBackground, 'theme changes rendered colors');
+  assert(localStorage.getItem('uihound-theme') === document.documentElement.dataset.theme, 'theme preference persisted');
+  const switchedPixel = [...$('#screen-canvas').getContext('2d').getImageData(100, 100, 1, 1).data];
+  assert(initialPixel.every((value, index) => value === switchedPixel[index]), 'theme never filters device pixels');
+  await click('theme-toggle');
+  assert(document.documentElement.dataset.theme === initialTheme, 'theme toggles back');
+  assert($('.inspector-tabs').getBoundingClientRect().height <= 32, 'tabs use compact single row');
+  assert($('.preview-heading').getBoundingClientRect().height <= 36, 'preview toolbar stays compact');
+  assert($('#locator-mode').getBoundingClientRect().width <= 28, 'mode buttons are small icons');
+  assert(!$('.detail-heading') && !$('.tree-heading'), 'redundant section headings removed');
+  assert($('#tree-node-count').getBoundingClientRect().right >= $('#tree-panel').getBoundingClientRect().right - 8, 'node count at far right');
+  assert(document.documentElement.scrollHeight <= innerHeight, 'no whole-page vertical scroll');
+  assert(document.documentElement.scrollWidth <= innerWidth, 'no whole-page horizontal scroll');
+  let screen = $('#screen-canvas').getBoundingClientRect();
+  const details = $('#detail-column').getBoundingClientRect();
+  const tree = $('#tree-panel').getBoundingClientRect();
+  assert(screen.right < details.left && details.right <= tree.left, 'screen left, details center, tree right');
+  const surface = $('.screen-surface').getBoundingClientRect();
+  assert(screen.width <= surface.width && screen.height <= surface.height, 'preview fits available surface');
+  assert(Math.abs(screen.width / screen.height - 1080 / 2400) < .01, 'aspect ratio preserved');
+  assert($('#tree-list').scrollWidth > $('#tree-list').clientWidth, 'long labels remain horizontally scrollable');
+  await click('collapse-tree'); await click('expand-tree');
+  $('#screen-stage').setPointerCapture = () => {};
+  pointer('pointerdown', .2, .15); pointer('pointerup', .2, .15);
+  await tick();
+  assert(state.selected?.xpath === fixtureElement.xpath, 'picking uses captured hierarchy');
+  assert(!fixtureRequests.some(item => item.url === '/internal/inspect'), 'picking never queries live hierarchy');
+  const labels = [...document.querySelectorAll('.property-name')].map(node => node.textContent);
+  assert(labels.includes('XPath') && labels.includes('u2 selector'), 'both copy-ready locators');
+  const xpathRow = [...document.querySelectorAll('.locator-row')].find(row => row.querySelector('.property-name').textContent === 'XPath');
+  xpathRow.querySelector('.copy-property').click();
+  await tick();
+  assert(fixtureCopied === fixtureElement.xpath, 'attribute XPath copied unchanged');
+  assert(!labels.includes('centerX') && !labels.includes('centerY'), 'center in one row');
+  const sections = [...document.querySelectorAll('.property-group h3')].map(node => node.textContent);
+  assert(sections.indexOf('位置尺寸') < sections.indexOf('状态属性'), 'geometry before status');
+  document.querySelector('.locator-row .copy-property').click();
+  await tick();
+  assert(fixtureCopied === fixtureElement.u2Selector, 'locator copy');
+  const beforeAction = captures();
+  await click('click-element');
+  assert(captures() === beforeAction, 'device action does not auto-refresh snapshot');
+  $('#search-query').value = 'text="设置"';
+  await search({preventDefault() {}});
+  assert(state.matches.length === 1 && $('.tree-row.matched'), 'captured search highlights tree');
+  assert(captures() === beforeAction, 'search does not recapture');
+  await click('refresh-capture');
+  assert(captures() === beforeAction + 1, 'explicit refresh recaptures');
+  await click('region-mode');
+  pointer('pointerdown', .2, .2); pointer('pointermove', .6, .6); pointer('pointerup', .6, .6);
+  await tick();
+  assert(state.region && !$('#selection-box').classList.contains('hidden'), 'region persists');
+  assert(!$('#region-editor').classList.contains('hidden'), 'numeric region editor visible');
+  const x1 = state.region.x1;
+  key('ArrowRight'); assert(state.region.x1 === x1 + 1, 'one-pixel keyboard nudge');
+  key('ArrowRight', true); assert(state.region.x1 === x1 + 11, 'shift ten-pixel nudge');
+  $('#region-x1').value = 100; $('#region-y1').value = 150;
+  $('#region-x2').value = 600; $('#region-y2').value = 1000;
+  await click('apply-region');
+  assert(state.region.x1 === 100 && state.region.y2 === 1000, 'numeric region apply');
+  $('#region-x1').value = -10; await click('apply-region');
+  assert(state.region.x1 === 100, 'invalid coordinate does not corrupt region');
+  const oldRight = state.region.x2;
+  pointer('pointerdown', .55, .3, document.querySelector('[data-handle="e"]'));
+  pointer('pointermove', .6, .3); pointer('pointerup', .6, .3);
+  assert(state.region.x2 > oldRight, 'edge drag resize');
+  const oldLeft = state.region.x1;
+  pointer('pointerdown', .3, .3, $('#selection-box'));
+  pointer('pointermove', .35, .35); pointer('pointerup', .35, .35);
+  assert(state.region.x1 > oldLeft, 'body drag moves region');
+  $('#screen-stage').dispatchEvent(new PointerEvent('pointerleave'));
+  assert(!$('#selection-box').classList.contains('hidden'), 'pointer leave retains region');
+  fixtureSaveFails = true;
+  await click('save-region');
+  assert(state.region && !$('#save-region').disabled, 'failed save retains editable region');
+  fixtureSaveFails = false;
+  await click('save-region');
+  assert(!state.region && $('#save-region').disabled, 'successful save clears region');
+  assert(!$('#pane-captures').classList.contains('hidden'), 'save shows thumbnails');
+  $('#snapshot-previews button').click();
+  await tick();
+  assert(fixtureRequests.some(item => item.url === '/internal/snapshots/copy-file'), 'PNG file clipboard action retained');
+  selectElement(fixtureElement); await click('save-element'); await click('save-full');
+  assert(fixtureRequests.some(item => item.url === '/internal/capture/save' && item.data.kind === 'element'), 'element save uses frozen image');
+  assert(fixtureRequests.some(item => item.url === '/internal/capture/save' && item.data.kind === 'full'), 'full save uses frozen image');
+  assert($('#snapshot-previews img').getBoundingClientRect().height <= 76, 'screenshot thumbnails compact');
+  const filesBefore = state.snapshots.files.size;
+  fixtureConfirm = false;
+  await click('delete-snapshots');
+  assert(state.snapshots.files.size === filesBefore, 'cancel bulk delete keeps files');
+  fixtureConfirm = true;
+  const deleteOne = $('#snapshot-previews .media-actions').lastElementChild;
+  deleteOne.click(); await tick();
+  assert(state.snapshots.files.size === filesBefore - 1, 'single delete removes file record');
+  await click('open-snapshots');
+  assert(fixtureRequests.some(item => item.url === '/internal/media/open-directory' && item.data.kind === 'snapshot'), 'open screenshot directory');
+  await click('delete-snapshots');
+  assert(state.snapshots.files.size === 0, 'bulk delete removes shown files');
+  await click('color-mode'); await tick();
+  assert(state.mode === 'color' && !$('#pane-color').classList.contains('hidden'), 'color opens tab');
+  assert(fixtureRequests.filter(item => item.url === '/internal/capture').at(-1).data.hierarchy === false, 'color does not read hierarchy');
+  pointer('pointermove', .2, .15);
+  assert(state.color.current, 'hover samples pixel');
+  assert($('#overlay-canvas').getContext('2d').getImageData(state.color.current.x, 0, 1, 1).data[3] > 0, 'color crosshair is visible on overlay');
+  const sampledPixel = $('#screen-canvas').getContext('2d').getImageData(state.color.current.x, state.color.current.y, 1, 1).data;
+  assert(state.color.current.rgb.every((value, index) => value === sampledPixel[index]), 'crosshair does not contaminate sampled pixels');
+  const oldX = state.color.current.x;
+  key('ArrowRight'); assert(state.color.current.x === oldX + 1, 'color arrow nudge');
+  key('Enter');
+  assert($('#color-history').children.length === 1, 'Enter saves sample');
+  pointer('pointerdown', .5, .5); pointer('pointerup', .5, .5);
+  assert($('#color-history').children.length === 2, 'click saves sample');
+  assert(state.color.history[0].x === state.color.current.x, 'latest color is first in data');
+  assert($('#color-history').firstElementChild.textContent.includes(`(${state.color.current.x}, ${state.color.current.y})`), 'latest color displayed first');
+  for (let i = 0; i < 101; i++) { state.color.sample(i, 1); state.color.confirm(); }
+  assert(state.color.history.length === 100 && state.color.history[0].x === 100 && state.color.history.at(-1).x === 1, 'newest-first color history evicts oldest entry');
+  assert($('#color-history').children.length === 100, 'color DOM remains bounded');
+  await click('clear-colors');
+  assert(!$('#color-history').children.length, 'clear color history');
+  const red = rgbToColor(255, 0, 0);
+  assert(red.hex.toUpperCase() === '#FF0000', 'HEX correct');
+  assert(red.hsb[0] === 0 && red.hsb[1] === 100 && red.hsb[2] === 100, 'HSB correct');
+  assert(red.opencv[0] === 0 && red.opencv[1] === 255 && red.opencv[2] === 255, 'OpenCV HSV correct');
+  const black = rgbToColor(0, 0, 0);
+  assert(black.hsb.every(value => value === 0), 'black has finite zero HSV');
+  state.color.sample(-5, 99999);
+  assert(state.color.current.x === 0 && state.color.current.y === state.height - 1, 'color sample clamps to pixels');
+  // Control tests use a transport double; remote.js packet decoding is tested separately below.
+  window.ScrcpyRemote = class {
+    constructor(handlers) { this.handlers = handlers; this.ready = false; }
+    start() { this.ready = true; this.handlers.status('scrcpy test'); this.handlers.frame(fixtureImage); }
+    stop() { this.ready = false; }
+    send(data) { fixtureRequests.push({url: 'scrcpy-control', data}); return true; }
+  };
+  await click('interaction-mode');
+  assert(state.mode === 'remote' && state.remote.ready, 'remote starts dedicated transport');
+  const remoteCaptureCount = captures();
+  pointer('pointerdown', .1, .2); pointer('pointermove', .3, .4); pointer('pointerup', .3, .4);
+  const touches = fixtureRequests.filter(item => item.url === 'scrcpy-control' && item.data.type === 'touch');
+  assert(touches.map(item => item.data.action).join(',') === 'down,move,up', 'live touch down/move/up, not u2 swipe');
+  for (const direction of [-1, 1]) {
+    const startIndex = fixtureRequests.length;
+    for (let i = 0; i < 30; i++) {
+      $('#screen-stage').dispatchEvent(new WheelEvent('wheel', {deltaX: 2 * direction, deltaY: 3 * direction, clientX: screen.left + screen.width / 2, clientY: screen.top + screen.height / 2, cancelable: true}));
+    }
+    endWheelGesture();
+    const gesture = fixtureRequests.slice(startIndex).map(item => item.data);
+    assert(gesture.filter(item => item.action === 'down').length === 1 && gesture.filter(item => item.action === 'up').length === 1, 'wheel burst creates one continuous drag');
+    assert(gesture.every(item => item.type === 'touch'), 'wheel never emits repeated Android scroll flings');
+    const first = gesture[0], last = gesture.at(-1);
+    assert((last.x - first.x) * direction < 0 && (last.y - first.y) * direction < 0, 'wheel touch follows natural scroll direction');
+    assert(Math.hypot(last.x - first.x, last.y - first.y) <= Math.min(state.width, state.height) * .55 + 1, 'gesture travel bounded to part of a screen');
+  }
+  pointer('pointerdown', .8, .5); pointer('pointermove', .2, .5); pointer('pointerup', .2, .5);
+  const leftDrag = fixtureRequests.filter(item => item.data?.type === 'touch').slice(-3);
+  assert(leftDrag[0].data.x > leftDrag[1].data.x && leftDrag[1].data.x === leftDrag[2].data.x, 'left mouse drag preserves physical touch coordinates');
+  document.querySelector('[data-action="home"]').click();
+  await tick();
+  assert(fixtureRequests.some(item => item.url === 'scrcpy-control' && item.data.type === 'key' && item.data.key === 'home'), 'side navigation via scrcpy');
+  assert(captures() === remoteCaptureCount, 'remote controls never refresh hierarchy');
+  await click('freeze-screen');
+  const touchCount = fixtureRequests.filter(item => item.url === 'scrcpy-control').length;
+  pointer('pointerdown', .1, .2); pointer('pointerup', .2, .3);
+  assert(fixtureRequests.filter(item => item.url === 'scrcpy-control').length === touchCount, 'paused remote blocks stale touches');
+  await click('freeze-screen');
+  pointer('pointerdown', .1, .2); window.dispatchEvent(new Event('blur'));
+  assert(fixtureRequests.at(-1).data.action === 'cancel', 'window blur releases touch');
+  await click('record-screen');
+  assert(state.recorder.active, 'sidebar starts native video encoder');
+  await api('/device/status');
+  assert(state.recorder.active, 'device status polling never stops recording');
+  await recordFrames(2200);
+  await state.recorder.stop();
+  assert(window.fixtureVideo instanceof Blob && fixtureVideo.size > 100, `native recording uploaded as binary WebM: ${$('#toast').textContent}; ${state.recorder.failure}; ${state.recorder.unsaved?.size}`);
+  const header = new Uint8Array(await fixtureVideo.slice(0, 4).arrayBuffer());
+  assert([...header].join(',') === '26,69,223,163', 'recording has actual WebM container');
+  assert(state.recordings.files.size === 1 && !$('#pane-recordings').classList.contains('hidden'), 'saved video shown in recording tab');
+  const video = $('#recording-previews video');
+  if (!video.videoWidth) await Promise.race([
+    new Promise((resolve, reject) => {
+      video.addEventListener('loadedmetadata', resolve, {once: true});
+      video.addEventListener('error', () => reject(Error('Saved recording cannot be decoded')), {once: true});
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(Error('Recorded video metadata timeout')), 5000)),
+  ]);
+  assert(video.videoWidth === 1080 && video.videoHeight === 2400, 'saved WebM decodes at device frame dimensions');
+  assert(Number.isFinite(video.duration) && video.duration >= 2, `recorded WebM has finite duration: ${video.duration}`);
+  await Promise.race([
+    new Promise((resolve, reject) => {
+      video.addEventListener('seeked', resolve, {once: true});
+      video.addEventListener('error', () => reject(Error('Recording seek decode failed')), {once: true});
+      video.currentTime = video.duration * .8;
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(Error('Recording seek timeout')), 5000)),
+  ]);
+  assert(video.readyState >= 2, 'saved recording decodes frames after seeking');
+  $('#recording-previews .media-actions button').click(); await tick();
+  await click('open-recordings');
+  assert(fixtureRequests.some(item => item.url === '/internal/media/copy-file' && item.data.kind === 'recording'), 'copy video file');
+  assert(fixtureRequests.some(item => item.url === '/internal/media/open-directory' && item.data.kind === 'recording'), 'open recording directory');
+  await click('delete-recordings');
+  assert(state.recordings.files.size === 0, 'delete recording files');
+  fixtureSaveFails = true;
+  await click('record-screen');
+  await recordFrames();
+  await state.recorder.stop();
+  assert(state.recorder.unsaved instanceof Blob, 'failed upload retains recording for retry');
+  fixtureSaveFails = false;
+  await click('retry-recording');
+  assert(!state.recorder.unsaved && state.recordings.files.size === 1, 'retry saves retained recording');
+  await click('record-screen');
+  await recordFrames();
+  await click('region-mode');
+  assert(state.mode === 'color' && state.regionMode, 'remote crop switches to lossless snapshot');
+  assert(!state.recorder.pending && !state.recorder.active, 'switching modes stops and saves active recording');
+  const oldWidth = layoutWidths.preview;
+  state.resizing = {panel: 'preview', startX: 100, startWidth: oldWidth};
+  resizePanel(130); state.resizing = null;
+  assert(layoutWidths.preview >= oldWidth, 'left preview resizable');
+  await click('reset-layout');
+  await click('disconnect-device');
+  assert(!state.connected && !state.tree && !state.region && $('#save-full').disabled, 'disconnect clears state');
+  await click('connect-device'); await tick();
+  selectElement(fixtureElement);
+  $('#tree-list').scrollLeft = 0;
+  assert(fixtureErrors.length === 0, fixtureErrors.join('; '));
+  document.body.dataset.result = 'PASS';
+}
+browserTests().catch(error => { document.body.dataset.result = `FAIL: ${error.message}`; });

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f2b48">
+  <script src="/static/theme.js"></script>
+  <title>UiHound · UI 猎犬</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <svg class="svg-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 6a8 8 0 0 1 14 6M18 18a8 8 0 0 1-14-6"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M8 5l2-2h4l2 2h4v15H4V5z"/><circle cx="12" cy="12" r="4"/></symbol>
+    <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6 2v16h16M2 6h16v16"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10l9-7 9 7M5 9v12h5v-7h4v7h5V9"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-recent" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 3h13l4 4v14H3V3zM7 3v6h10V3M7 21v-8h10v8"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="i-clear" viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6m4-6v6"/></symbol>
+    <symbol id="i-hierarchy" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13M3 4v2m0 5v2m0 5v2"/></symbol>
+    <symbol id="i-color" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 0-4c-2 0-2-3 0-3h4a4 4 0 0 0 4-4c0-4-5-7-9-7z"/><circle cx="7" cy="10" r=".7"/><circle cx="10" cy="6" r=".7"/><circle cx="15" cy="7" r=".7"/></symbol>
+    <symbol id="i-remote" viewBox="0 0 24 24"><path d="M3 3h18v14H3zM12 17v4m-5 0h10"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12l1 1M5 19l1-1M18 6l1-1"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11z"/></symbol>
+  </svg>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="UiHound 首页"><img src="/static/logo.svg" width="34" height="34" alt=""><span><strong>UiHound</strong><small>UI 猎犬 · Android Inspector</small></span></a>
+    <div class="topbar-actions">
+      <button id="refresh-capture" class="button button-muted" title="重新获取当前画面与层级" data-device disabled><svg><use href="#i-refresh"/></svg>刷新画面</button>
+      <button id="reset-layout" class="icon-button" title="重置布局" aria-label="重置布局"><svg><use href="#i-expand"/></svg></button>
+      <button id="theme-toggle" class="icon-button" title="切换到白天模式" aria-label="切换到白天模式" aria-pressed="false"><svg><use href="#i-sun"/></svg></button>
+    </div>
+    <div class="connection">
+      <select id="device-select" aria-label="在线 ADB 设备"><option value="">选择在线设备</option></select>
+      <button id="refresh-devices" class="icon-button" title="扫描 ADB 设备" aria-label="扫描 ADB 设备"><svg><use href="#i-refresh"/></svg></button>
+      <input id="device-address" type="text" placeholder="设备序列号 / 127.0.0.1:5555" aria-label="设备序列号或网络地址">
+      <button id="connect-device" class="button button-primary">连接设备</button>
+      <button id="disconnect-device" class="button button-muted" disabled>断开</button>
+    </div>
+  </header>
+  <main class="workspace">
+    <section id="preview-column" class="preview-column panel">
+      <div class="panel-heading preview-heading">
+        <span id="mode-label" class="visually-hidden">hierarchy</span>
+        <div class="mode-switch" aria-label="画面模式">
+          <button id="locator-mode" class="mode-button active" title="hierarchy：获取当前画面和节点树" aria-label="hierarchy 层级快照" aria-pressed="true" data-device disabled><svg><use href="#i-hierarchy"/></svg></button>
+          <button id="color-mode" class="mode-button" title="color：获取无损画面并取色" aria-label="color 颜色取样" aria-pressed="false" data-device disabled><svg><use href="#i-color"/></svg></button>
+          <button id="interaction-mode" class="mode-button" title="remote：scrcpy 远程交互" aria-label="remote scrcpy 远程交互" aria-pressed="false" data-device disabled><svg><use href="#i-remote"/></svg></button>
+        </div>
+        <span id="screen-size">等待连接</span>
+        <button id="toggle-bounds" class="icon-button" title="显示 / 隐藏节点虚线边框" aria-label="节点虚线边框" aria-pressed="true"><svg><use href="#i-expand"/></svg></button>
+        <span id="mode-hint" class="visually-hidden">静态画面 · 页面变化后点击刷新</span>
+      </div>
+      <div id="device-viewport" class="device-viewport">
+        <div class="screen-surface">
+          <div id="screen-empty" class="screen-empty"><div class="empty-device"><svg><use href="#i-target"/></svg></div><strong>连接 Android 设备</strong><span>hierarchy · color · remote<br>选择设备后开始探查</span></div>
+          <div id="screen-wrap" class="screen-wrap hidden">
+            <div id="screen-stage" class="screen-stage" tabindex="0" aria-label="设备画面；方向键微调选区或取色点">
+              <canvas id="screen-canvas" aria-label="Android 设备画面"></canvas>
+              <canvas id="overlay-canvas" aria-hidden="true"></canvas>
+              <div id="selection-box" class="selection-box hidden" tabindex="0" role="group" aria-label="截图选区，可拖动移动和缩放">
+                <span class="region-handle" data-handle="nw"></span><span class="region-handle" data-handle="n"></span><span class="region-handle" data-handle="ne"></span>
+                <span class="region-handle" data-handle="w"></span><span class="region-handle" data-handle="e"></span>
+                <span class="region-handle" data-handle="sw"></span><span class="region-handle" data-handle="s"></span><span class="region-handle" data-handle="se"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <nav class="device-rail" aria-label="设备操作">
+          <button class="rail-button" data-action="home" data-device disabled title="主页"><svg><use href="#i-home"/></svg></button>
+          <button class="rail-button" data-action="back" data-device disabled title="返回"><svg><use href="#i-back"/></svg></button>
+          <button class="rail-button" data-action="recent" data-device disabled title="后台任务"><svg><use href="#i-recent"/></svg></button>
+          <div class="rail-divider"></div>
+          <button id="freeze-screen" class="rail-button" title="暂停 remote 显示（暂停时不发送触摸）" aria-label="冻结画面" aria-pressed="false" disabled>Ⅱ</button>
+          <button id="region-mode" class="rail-button" aria-pressed="false" title="框选截图（remote 下先切换到静态画面）" data-device disabled><svg><use href="#i-crop"/></svg><span>框选</span></button>
+          <button id="save-full" class="rail-button" title="保存全屏截图" data-device disabled><svg><use href="#i-camera"/></svg></button>
+          <button id="record-screen" class="rail-button" title="开始录屏" aria-label="录屏" aria-pressed="false" data-device disabled><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></svg></button>
+          <button id="save-region" class="rail-button" title="保存选区并清除" disabled><svg><use href="#i-save"/></svg></button>
+          <button id="clear-region" class="rail-button" title="清除截图选区" disabled><svg><use href="#i-clear"/></svg></button>
+          <button id="show-captures" class="rail-button" title="截图记录"><svg><use href="#i-recent"/></svg></button>
+        </nav>
+      </div>
+      <section id="region-editor" class="region-editor hidden" aria-label="选区微调">
+        <div class="region-fields">
+          <label>x1<input id="region-x1" type="number" min="0" step="1"></label><label>y1<input id="region-y1" type="number" min="0" step="1"></label>
+          <label>x2<input id="region-x2" type="number" min="1" step="1"></label><label>y2<input id="region-y2" type="number" min="1" step="1"></label>
+        </div>
+        <div class="region-editor-footer"><span id="region-size">拖动边角缩放；方向键移动 1px，Shift 10px</span><button id="apply-region" class="button button-muted">应用坐标</button></div>
+      </section>
+    </section>
+    <div class="resize-handle resize-handle-left" data-resize="preview" role="separator" aria-label="调整设备预览宽度" aria-orientation="vertical" tabindex="0"></div>
+    <aside id="inspector-column" class="inspector-column panel">
+      <div class="inspector-tabs" role="tablist" aria-label="调试面板">
+        <button id="tab-detail" data-tab="detail" role="tab" aria-selected="true" aria-controls="pane-detail" class="active">层级 / 属性</button>
+        <button id="tab-color" data-tab="color" role="tab" aria-selected="false" aria-controls="pane-color" tabindex="-1">颜色</button>
+        <button id="tab-tools" data-tab="tools" role="tab" aria-selected="false" aria-controls="pane-tools" tabindex="-1">常用操作</button>
+        <button id="tab-captures" data-tab="captures" role="tab" aria-selected="false" aria-controls="pane-captures" tabindex="-1">截图 <span id="capture-count">0</span></button>
+        <button id="tab-recordings" data-tab="recordings" role="tab" aria-selected="false" aria-controls="pane-recordings" tabindex="-1">录屏 <span id="recording-count">0</span></button>
+      </div>
+      <section id="pane-detail" class="hierarchy-pane" role="tabpanel" aria-labelledby="tab-detail">
+        <div id="detail-column" class="detail-card">
+          <p id="detail-subtitle" class="visually-hidden">选择画布或节点树中的元素</p>
+          <div id="element-detail" class="detail-content"><div class="detail-placeholder"><svg><use href="#i-target"/></svg><strong>还未选择元素</strong><span>获取 hierarchy 快照后点击元素<br>页面变化后请主动刷新</span></div></div>
+          <div class="element-actions"><button id="click-element" class="button button-primary" disabled>点击元素</button><button id="save-element" class="button button-muted" disabled>元素截图</button></div>
+        </div>
+        <div class="resize-handle resize-handle-right" data-resize="inspector" role="separator" aria-label="调整属性与节点树宽度" aria-orientation="vertical" tabindex="0"></div>
+        <section id="tree-panel" class="tree-panel">
+          <section class="tree-search">
+            <form id="search-form" class="search-form"><input id="search-query" type="text" placeholder='text="设置" 或 XPath · 仅搜索当前快照' aria-label="搜索当前快照" autocomplete="off"><button class="icon-button search-button" type="submit" aria-label="搜索元素" data-device disabled><svg><use href="#i-search"/></svg></button></form>
+            <div class="search-summary"><span id="search-count">仅搜索当前快照</span><button id="clear-highlights" class="text-button">清除高亮</button></div><div id="search-results" class="search-results"></div>
+          </section>
+          <div class="tree-tools"><button id="expand-tree" class="text-button" data-device disabled>展开</button><button id="collapse-tree" class="text-button" data-device disabled>收起</button><button id="reload-tree" class="icon-button" title="重新获取当前画面和层级" aria-label="刷新画面与节点树" data-device disabled><svg><use href="#i-refresh"/></svg></button><span id="tree-node-count" class="count-badge" title="节点总数" aria-label="节点总数">0</span></div>
+          <div id="tree-empty" class="list-empty">点击 hierarchy 获取当前节点树</div><div id="tree-list" class="element-list"></div>
+        </section>
+      </section>
+      <section id="pane-color" class="inspector-pane color-pane hidden" role="tabpanel" aria-labelledby="tab-color">
+        <h2>颜色取样</h2><p class="capture-help">移动鼠标预览像素，方向键微调 1px（Shift 10px）；单击或 Enter 保存取样。取自无损 PNG，不含高亮框。</p>
+        <div class="color-workbench"><canvas id="color-magnifier" width="220" height="220" aria-label="像素放大镜"></canvas><div id="color-detail">点击上方 color 图标获取画面后取色</div></div>
+        <div class="color-history-heading"><h2>已保存的取样</h2><button id="clear-colors" class="button button-muted">清除取样</button></div><div id="color-history"></div>
+      </section>
+      <section id="pane-tools" class="inspector-pane tools-pane hidden" role="tabpanel" aria-labelledby="tab-tools">
+        <div class="tool-section"><h2>文本输入</h2><p>hierarchy 模式操作选中的实时元素；remote 模式操作当前焦点。设备操作后需手动刷新层级。</p><label for="input-text">输入内容</label><textarea id="input-text" rows="4" placeholder="输入要发送到设备的文本"></textarea><div class="input-actions"><button id="send-text" class="button button-primary" data-device disabled>发送文本</button><button id="clear-text" class="button button-muted" data-device disabled>清空输入框</button></div></div>
+        <div class="tool-section"><h2>模式说明</h2><dl class="shortcut-list"><dt>hierarchy</dt><dd>一次获取画面和节点树；本地拾取与快照搜索不会重新读取设备。</dd><dt>color</dt><dd>无损取色、放大镜、HEX / RGB / HSB / OpenCV HSV、坐标微调和多点记录。</dd><dt>remote</dt><dd>scrcpy H.264 远程画面；鼠标按下/拖动/松开直接触摸，触摸板双指滚动转为设备滚动。</dd><dt>区域截图</dt><dd>拖动选区或八个边角调整，也可输入坐标或用方向键微调；保存成功后自动清除。</dd></dl></div>
+        <div class="tool-section"><h2>工作区</h2><p>设备在左，属性和节点树在右。两条分隔线均可拖动。</p><button id="reset-layout-tools" class="button button-muted">恢复默认布局</button></div>
+      </section>
+      <section id="pane-captures" class="inspector-pane captures-pane hidden" role="tabpanel" aria-labelledby="tab-captures">
+        <div class="snapshot-path"><label for="snapshot-directory">截图保存目录</label><div class="path-controls"><input id="snapshot-directory" type="text" aria-label="截图保存目录" spellcheck="false"><button id="save-snapshot-path" class="button button-muted">应用</button></div><p id="snapshot-path-hint">限配置的截图根目录及其子目录</p></div>
+        <div class="capture-heading"><h2>截图文件</h2><div class="media-actions"><button id="open-snapshots" class="button button-muted">打开目录</button><button id="refresh-snapshots" class="button button-muted">刷新列表</button><button id="delete-snapshots" class="button button-muted">删除全部</button></div></div><p class="capture-help">当前目录文件；删除会移除磁盘文件。复制后可在本机文件管理器使用系统粘贴快捷键粘贴 PNG。</p>
+        <div id="captures-empty" class="detail-placeholder">截图后在此预览，无需打开保存文件夹</div><div id="snapshot-card" class="snapshot-card hidden"><div id="snapshot-previews" class="snapshot-previews"></div></div>
+      </section>
+      <section id="pane-recordings" class="inspector-pane captures-pane hidden" role="tabpanel" aria-labelledby="tab-recordings">
+        <div class="snapshot-path"><label for="recording-directory">录屏保存目录</label><div class="path-controls"><input id="recording-directory" type="text" aria-label="录屏保存目录" spellcheck="false"><button id="save-recording-path" class="button button-muted">应用</button></div></div>
+        <div class="capture-heading"><h2>录屏文件</h2><div class="media-actions"><button id="open-recordings" class="button button-muted">打开目录</button><button id="refresh-recordings" class="button button-muted">刷新列表</button><button id="delete-recordings" class="button button-muted">删除全部</button></div></div>
+        <p class="capture-help">侧栏圆形按钮开始 / 停止录屏。录制 scrcpy 原始画面，不含节点框；无音频 WebM。切换模式或断开会停止并保存。关闭页面前请等待保存完成。</p>
+        <button id="retry-recording" class="button button-primary hidden">重试保存上次录屏</button>
+        <div id="recordings-empty" class="detail-placeholder">尚无录屏文件</div><div><div id="recording-previews" class="snapshot-previews"></div></div>
+      </section>
+    </aside>
+  </main>
+  <footer class="statusbar">
+    <span class="device-status"><i id="connection-indicator" class="indicator"></i><span id="connection-label">未连接设备</span></span>
+    <span id="accessibility-status">层级：待获取</span><span id="stream-status" class="stream-status">未连接</span><span id="mouse-coordinate">设备坐标：--</span><span id="region-coordinate">框选区域：--</span><span id="gesture-status">hierarchy</span><span id="screen-message" class="status-message"></span>
+    <span id="recording-status"></span>
+  </footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/color.js"></script>
+  <script src="/static/remote.js"></script>
+  <script src="/static/recording.js"></script>
+  <script src="/static/media.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
