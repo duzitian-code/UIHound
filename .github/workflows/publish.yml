@@ -1,0 +1,123 @@
+name: Test and publish
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: python -m pip install .
+      - name: Run existing tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check whether version is already published
+        id: version
+        shell: python
+        run: |
+          import ast
+          import json
+          import os
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import urlopen
+
+          module = ast.parse(Path("src/uihound/__init__.py").read_text(encoding="utf-8"))
+          version = next(
+              ast.literal_eval(node.value)
+              for node in module.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+          )
+          try:
+              with urlopen(f"https://pypi.org/pypi/uihound/{version}/json", timeout=30) as response:
+                  release = json.load(response)
+              if not release.get("urls"):
+                  raise RuntimeError("PyPI version exists without downloadable files; investigate before publishing")
+              publish = False
+              print(f"Version {version} is already published; skipping upload.")
+          except HTTPError as error:
+              if error.code != 404:
+                  raise
+              publish = True
+              print(f"Version {version} will be published.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"publish={str(publish).lower()}\n")
+      - name: Install packaging tools
+        if: steps.version.outputs.publish == 'true'
+        run: python -m pip install build twine
+      - name: Build distribution
+        if: steps.version.outputs.publish == 'true'
+        run: python -m build --outdir release-dist
+      - name: Check distribution metadata
+        if: steps.version.outputs.publish == 'true'
+        run: python -m twine check release-dist/*
+      - name: Check packaged frontend assets
+        if: steps.version.outputs.publish == 'true'
+        shell: python
+        run: |
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheel, = Path("release-dist").glob("*.whl")
+          with ZipFile(wheel) as archive:
+              files = set(archive.namelist())
+              for asset in Path("src/uihound/static").iterdir():
+                  if asset.is_file() and f"uihound/static/{asset.name}" not in files:
+                      raise RuntimeError(f"Missing frontend asset: {asset.name}")
+      - name: Check installed wheel entry point
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          python -m pip install release-dist/*.whl
+          cd "${RUNNER_TEMP}"
+          uihound --help
+      - uses: actions/upload-artifact@v4
+        if: steps.version.outputs.publish == 'true'
+        with:
+          name: pypi-distributions
+          path: release-dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/uihound/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
