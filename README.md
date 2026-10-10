@@ -55,6 +55,13 @@ pip install --upgrade uihound
 
 升级后重启 `uihound`，刷新网页即可。
 
+网页顶部显示当前运行版本，也可在终端查询（不会启动服务）：
+
+```shell
+uihound --version
+# 或 uihound -V
+```
+
 ## 使用方法
 
 ### 检查元素：hierarchy
@@ -79,7 +86,7 @@ XPath 优先使用当前层级中唯一的 `resource-id`、`content-desc`、`tex
 
 点击冻结按钮暂停网页画面，暂停期间禁用触摸，再次点击恢复。文本输入在“常用操作”页完成，支持 `Ctrl+Enter` 发送。
 
-首次使用 remote 会下载 scrcpy-server v3.3.4。离线环境可预先下载同版本官方文件，并通过 `UIHOUND_SCRCPY_SERVER` 指定路径。
+安装包已内置官方 scrcpy-server v3.3.4，启动 remote 和录屏无需访问 GitHub。程序会校验文件完整性；如需使用自备文件，可通过 `UIHOUND_SCRCPY_SERVER` 指定同版本官方文件的路径。该组件按 Apache-2.0 许可证分发，许可证及来源说明随包附带。
 
 ### 取色：color
 

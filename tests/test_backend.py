@@ -239,6 +239,20 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(settings.snapshot_dir, self.root / "custom-images")
         self.assertEqual(settings.recording_dir, self.root / "custom-videos")
 
+    def test_display_and_command_share_package_version(self):
+        status, page = call_api("/")
+        self.assertEqual(status, 200)
+        self.assertIn(f'v{web.__version__}'.encode(), page)
+        self.assertNotIn(b"<!--UIHOUND_VERSION-->", page)
+        for flag in ("--version", "-V"):
+            with patch("sys.argv", ["uihound", flag]), patch.object(web, "BrowserServer") as server, \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                with self.assertRaises(SystemExit) as exit_result:
+                    web.main()
+                self.assertEqual(exit_result.exception.code, 0)
+                self.assertEqual(output.getvalue().strip(), f"UiHound {web.__version__}")
+                server.assert_not_called()
+
     def test_media_defaults_use_user_home(self):
         with patch.dict("os.environ", {}, clear=True), patch.object(Path, "home", return_value=self.root):
             with patch.object(Path, "cwd", return_value=self.root / "first"):

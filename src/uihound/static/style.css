@@ -40,6 +40,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: 16px; letter-spacing: .2px; }
 .brand small { display: none; }
+.app-version { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .topbar-actions { display: flex; gap: 6px; align-items: center; }
 .connection { display: flex; align-items: center; justify-content: flex-end; gap: 7px; margin-left: auto; min-width: 0; }
 .connection input { width: clamp(170px, 17vw, 260px); }
@@ -52,12 +53,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .freeze-button[aria-pressed="true"] { background: #5c4325; color: #ffd194; border-color: #a3753f; }
 .icon-button { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; color: var(--muted); border: 1px solid transparent; border-radius: 4px; background: transparent; }
 .icon-button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.workspace { --preview-width: 28vw; --inspector-width: 340px; display: grid; grid-template-columns: var(--preview-width) 8px minmax(510px, 1fr); height: calc(100dvh - 68px); padding: 4px 6px; }
+.workspace { --preview-width: 28vw; --inspector-width: 340px; display: grid; grid-template-columns: var(--preview-width) 8px minmax(0, 1fr); height: calc(100dvh - 68px); padding: 4px 6px; }
 .panel { min-width: 0; min-height: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .tree-panel { grid-column: 3; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .preview-column { grid-column: 1; display: flex; flex-direction: column; background: var(--panel); }
 .inspector-column { grid-column: 3; display: flex; flex-direction: column; }
-.hierarchy-pane { display: grid; grid-template-columns: var(--inspector-width) 8px minmax(220px, 1fr); flex: 1; min-height: 0; min-width: 0; }
+.hierarchy-pane { display: grid; grid-template-columns: var(--inspector-width) 8px minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; }
 #detail-column { grid-column: 1; min-width: 0; min-height: 0; padding: 0 8px 6px; }
 .resize-handle { position: relative; z-index: 2; grid-row: 1; width: 8px; cursor: col-resize; touch-action: none; }
 .resize-handle::after { content: ""; position: absolute; top: 45%; left: 3px; width: 2px; height: 35px; border-radius: 3px; background: #35485f; }

@@ -33,8 +33,8 @@ const state = {
 };
 
 const layoutLimits = {
-  preview: { min: 280, max: 1100, initial: Math.round(Math.max(1000, innerWidth) * .28) },
-  inspector: { min: 260, max: 650, initial: 340 },
+  preview: { min: 48, initial: Math.round(Math.max(1000, innerWidth) * .28) },
+  inspector: { min: 48, initial: 340 },
 };
 const layoutWidths = {
   preview: layoutLimits.preview.initial,
@@ -147,9 +147,9 @@ function loadLayoutWidths() {
 function clampLayoutWidth(panel, width) {
   const limits = layoutLimits[panel];
   const workspace = $('.workspace');
-  const otherPanel = panel === 'preview' ? layoutWidths.inspector : layoutWidths.preview;
-  const availableMax = workspace ? workspace.clientWidth - otherPanel - 250 - 40 : limits.max;
-  const max = Math.max(limits.min, Math.min(limits.max, availableMax));
+  const total = workspace ? workspace.clientWidth - 32 : innerWidth - 32;
+  const reserved = panel === 'preview' ? layoutLimits.inspector.min : layoutWidths.preview;
+  const max = Math.max(limits.min, total - reserved - 48);
   return Number.isFinite(width) ? Math.min(max, Math.max(limits.min, width)) : Math.min(max, limits.initial);
 }
 

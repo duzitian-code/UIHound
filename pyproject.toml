@@ -26,7 +26,7 @@ uihound = "uihound.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-uihound = ["static/*"]
+uihound = ["static/*", "binaries/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "uihound.__version__"}

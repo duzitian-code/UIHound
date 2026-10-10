@@ -85,6 +85,7 @@ jobs:
         run: |
           from pathlib import Path
           from zipfile import ZipFile
+          import hashlib
 
           wheel, = Path("release-dist").glob("*.whl")
           with ZipFile(wheel) as archive:
@@ -92,6 +93,12 @@ jobs:
               for asset in Path("src/uihound/static").iterdir():
                   if asset.is_file() and f"uihound/static/{asset.name}" not in files:
                       raise RuntimeError(f"Missing frontend asset: {asset.name}")
+              for asset in Path("src/uihound/binaries").iterdir():
+                  if asset.is_file() and archive.read(f"uihound/binaries/{asset.name}") != asset.read_bytes():
+                      raise RuntimeError(f"Incorrect bundled component: {asset.name}")
+              server = archive.read("uihound/binaries/scrcpy-server-v3.3.4")
+              if hashlib.sha256(server).hexdigest() != "8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e":
+                  raise RuntimeError("Bundled scrcpy-server checksum mismatch")
       - name: Check installed wheel entry point
         if: steps.version.outputs.publish == 'true'
         run: |

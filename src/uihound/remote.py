@@ -14,11 +14,8 @@ import os
 import secrets
 import socket
 import struct
-import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
-from urllib.request import urlopen
 
 from adbutils import adb
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -31,49 +28,26 @@ from .config import settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 VERSION = "3.3.4"
-SERVER_URL = f"https://github.com/Genymobile/scrcpy/releases/download/v{VERSION}/scrcpy-server-v{VERSION}"
 SERVER_SHA256 = "8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e"
-SERVER_PATH = Path(os.environ.get("UIHOUND_SCRCPY_SERVER", Path.home() / ".cache" / "uihound" / f"scrcpy-server-v{VERSION}"))
+SERVER_PATH = Path(os.environ.get(
+    "UIHOUND_SCRCPY_SERVER",
+    Path(__file__).resolve().parent / "binaries" / f"scrcpy-server-v{VERSION}",
+))
 MAX_PACKET = 8 * 1024 * 1024
 KEY_CODES = {"home": 3, "back": 4, "recent": 187, "volume_up": 24, "volume_down": 25}
 
 
 def server_path() -> Path:
-    """Return a verified copy of the pinned upstream server, downloading on demand."""
+    """Return the verified bundled server or an explicitly configured copy."""
     path = SERVER_PATH.expanduser()
     if path.is_file():
         if hashlib.sha256(path.read_bytes()).hexdigest() == SERVER_SHA256:
             return path
-        raise RuntimeError(f"scrcpy-server checksum mismatch at {path}; remove the invalid file and retry")
-    if os.environ.get("UIHOUND_SCRCPY_SERVER"):
-        raise RuntimeError(f"scrcpy-server v{VERSION} not found at {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with urlopen(SERVER_URL, timeout=25) as response:
-            download_url = urlsplit(response.url)
-            if download_url.scheme != "https" or download_url.hostname not in {"github.com", "release-assets.githubusercontent.com"}:
-                raise RuntimeError("Unexpected scrcpy-server download host")
-            digest = hashlib.sha256()
-            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".scrcpy-", delete=False) as output:
-                temporary = Path(output.name)
-                size = 0
-                while chunk := response.read(64 * 1024):
-                    size += len(chunk)
-                    if size > 2 * 1024 * 1024:
-                        raise RuntimeError("scrcpy-server download exceeds expected size")
-                    digest.update(chunk)
-                    output.write(chunk)
-        if digest.hexdigest() != SERVER_SHA256:
-            raise RuntimeError("scrcpy-server download checksum mismatch")
-        temporary.replace(path)
-        temporary = None
-        return path
-    except OSError as exc:
-        raise RuntimeError(f"Could not download scrcpy-server v{VERSION}: {exc}; set UIHOUND_SCRCPY_SERVER to a verified copy") from exc
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        raise RuntimeError(f"scrcpy-server checksum mismatch at {path}; reinstall uihound or provide a verified copy")
+    raise RuntimeError(
+        f"scrcpy-server v{VERSION} not found at {path}; reinstall uihound "
+        "or set UIHOUND_SCRCPY_SERVER to a verified copy"
+    )
 
 
 def server_ready() -> bool:

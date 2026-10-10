@@ -106,9 +106,21 @@ class RemoteProtocolTests(unittest.TestCase):
 
     def test_status_never_downloads_or_starts_scrcpy(self):
         download = unittest.mock.Mock()
-        with patch.dict(remote.__dict__, {"urlopen": download, "server_ready": lambda: False}):
+        with patch("urllib.request.urlopen", download), patch.object(remote, "server_ready", return_value=False):
             self.assertFalse(remote.remote_status()["server_ready"])
             download.assert_not_called()
+
+    def test_bundled_server_is_verified_without_network(self):
+        with patch("urllib.request.urlopen", side_effect=AssertionError("Network must not be used")):
+            self.assertTrue(remote.server_ready())
+            self.assertEqual(remote.server_path(), remote.SERVER_PATH.expanduser())
+
+    def test_missing_server_reports_error_without_network(self):
+        with patch.object(remote, "SERVER_PATH", Path(__file__).with_name("missing-scrcpy-server")), \
+                patch("urllib.request.urlopen", side_effect=AssertionError("Network must not be used")):
+            self.assertFalse(remote.server_ready())
+            with self.assertRaisesRegex(RuntimeError, "not found"):
+                remote.server_path()
 
     def test_session_cleanup_removes_only_its_forward_and_server(self):
         session = remote.ScrcpySession("serial")

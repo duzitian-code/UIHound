@@ -133,6 +133,7 @@ def invoke(operation: Any) -> Any:
 def index() -> HTMLResponse:
     asset = static_asset("index.html")
     html = asset.read_text(encoding="utf-8")
+    html = html.replace("<!--UIHOUND_VERSION-->", __version__)
     version = static_version()
     html = html.replace("/static/style.css", f"/static/style.css?v={version}")
     html = html.replace("/static/app.js", f"/static/app.js?v={version}")
@@ -465,6 +466,7 @@ class BrowserServer(uvicorn.Server):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="UiHound browser-based Android UI inspector")
+    parser.add_argument("--version", "-V", action="version", version=f"UiHound {__version__}")
     parser.add_argument("--host", default=config.HOST)
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--no-browser", action="store_true", help="Do not open the default browser")
