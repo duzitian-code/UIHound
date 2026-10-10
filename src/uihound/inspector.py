@@ -162,7 +162,23 @@ class Inspector:
 
         tree = build_tree(root, f"/{root.tag}[1]", 0)
         self._attach_unique_selectors(all_nodes)
-        return {"elements": elements, "tree": tree, "empty": not elements, "node_count": len(all_nodes)}
+        visible_nodes = set()
+
+        def retain_primary_display(item: dict[str, Any], inherited_display: str = "0") -> bool:
+            display = str(item.get("display-id", inherited_display))
+            if display != "0":
+                return False
+            visible_nodes.add(id(item))
+            item["children"] = [
+                child for child in item["children"] if retain_primary_display(child, display)
+            ]
+            return True
+
+        # Keep original XML positions and globally unique selectors for native u2 lookup.
+        if not retain_primary_display(tree):
+            tree = None
+        elements = [item for item in elements if id(item) in visible_nodes]
+        return {"elements": elements, "tree": tree, "empty": not elements, "node_count": len(visible_nodes)}
 
     @staticmethod
     def _usable_selector_value(value: Any) -> bool:

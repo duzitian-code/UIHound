@@ -720,6 +720,28 @@ function renderResults() {
   });
 }
 
+function auxiliaryBounds(elements) {
+  const seen = new Set();
+  return elements.filter(element => {
+    const b = element.bounds;
+    if (!b || ![b.left, b.top, b.right, b.bottom].every(Number.isFinite)) return false;
+    if (b.right <= b.left || b.bottom <= b.top ||
+        b.right <= 0 || b.bottom <= 0 || b.left >= state.width || b.top >= state.height) return false;
+    if (element.nodeName === 'hierarchy' || element.visible === false || element.visibleToUser === false) return false;
+    const hasLabel = [element.text, element.contentDescription, element.description]
+      .some(value => typeof value === 'string' && value.trim());
+    const interactive = ['clickable', 'longClickable', 'checkable', 'scrollable', 'focusable']
+      .some(key => element[key] === true);
+    const container = element.children?.length > 0 ||
+      /(?:Layout|ViewGroup|ScrollView|RecyclerView|ListView|ViewPager)\d*$/.test(element.className || '');
+    if (container && !hasLabel && !interactive) return false;
+    const key = `${b.left},${b.top},${b.right},${b.bottom}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function updateOverlay() {
   const canvas = $('#overlay-canvas');
   const context = canvas.getContext('2d');
@@ -728,16 +750,12 @@ function updateOverlay() {
     if (state.showBounds) {
       const scale = state.width / Math.max(1, canvas.clientWidth);
       context.save();
-      context.lineWidth = scale;
-      context.setLineDash([3 * scale, 3 * scale]);
-      const seen = new Set();
-      for (const element of state.hierarchy) {
+      context.lineWidth = 0.75 * scale;
+      context.setLineDash([2 * scale, 2 * scale]);
+      context.globalAlpha = 0.65;
+      for (const element of auxiliaryBounds(state.hierarchy)) {
         const b = element.bounds;
-        if (!b || b.right <= b.left || b.bottom <= b.top) continue;
-        const key = `${b.left},${b.top},${b.right},${b.bottom}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        context.strokeStyle = element.clickable ? '#ff5d77' : '#528cff';
+        context.strokeStyle = element.clickable ? '#6585d9' : '#d4a58a';
         context.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
       }
       context.restore();
@@ -1063,7 +1081,7 @@ function bindEvents() {
   });
   $('#toggle-bounds').addEventListener('click', () => {
     state.showBounds = !state.showBounds;
-    $('#toggle-bounds').setAttribute('aria-pressed', String(state.showBounds));
+    updateBoundsButton();
     updateOverlay();
   });
   $('#theme-toggle').addEventListener('click', () => {
@@ -1400,6 +1418,14 @@ function updateThemeButton() {
     toast(window.UiHoundTheme.error, true);
     window.UiHoundTheme.error = null;
   }
+}
+
+function updateBoundsButton() {
+  const button = $('#toggle-bounds');
+  const label = state.showBounds ? '隐藏节点虚线边框' : '显示节点虚线边框';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-pressed', String(state.showBounds));
 }
 
 initialize();

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uihound"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Browser-based Android UI inspector for HIL testing"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,3 +27,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 uihound = ["static/*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "uihound.__version__"}

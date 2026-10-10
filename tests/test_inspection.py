@@ -13,6 +13,29 @@ from uihound.inspection import InspectionStore
 class InspectionTests(unittest.TestCase):
     setUp = test_backend.BackendTests.setUp
 
+    def test_other_displays_are_excluded_without_changing_native_paths(self):
+        xml = """<hierarchy>
+        <node class="android.view.View" display-id="3" bounds="[0,0][10,20]" text="Other"/>
+        <node class="android.view.View" display-id="0" bounds="[0,0][10,20]" text="Shared"/>
+        <node class="android.view.View" display-id="1" bounds="[0,0][10,20]" text="Shared">
+          <node class="android.widget.TextView" bounds="[0,0][5,10]" text="Inherited"/>
+        </node>
+        <node class="android.widget.TextView" bounds="[10,20][50,60]" text="Default"/>
+        </hierarchy>"""
+        self.device.dump_hierarchy.return_value = xml
+        store = InspectionStore()
+        capture = store.capture(self.inspector, True)
+        self.assertEqual(capture["node_count"], 3)
+        self.assertEqual([item["text"] for item in capture["elements"]], ["Shared", "Default"])
+        self.assertEqual(capture["elements"][0]["xpath"], "/hierarchy[1]/*[2]")
+        self.assertEqual(len(capture["tree"]["children"]), 2)
+        for query in ['text="Other"', 'text="Inherited"', '/hierarchy[1]/*[1]', '/hierarchy[1]/*[3]']:
+            self.assertEqual(store.search(capture["snapshot_id"], query, self.inspector), [])
+        self.assertEqual(len(store.search(capture["snapshot_id"], '/hierarchy[1]/*[2]', self.inspector)), 1)
+        source = test_backend.PageSource.parse(xml)
+        for element in capture["elements"]:
+            self.assertEqual(len(source.find_elements(element["xpath"])), 1)
+
     def test_static_capture_is_lossless_and_search_does_not_read_device(self):
         status, capture = call_api("/internal/capture", "POST", {"hierarchy": True})
         self.assertEqual(status, 200)

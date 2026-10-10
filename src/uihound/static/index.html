@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0f2b48">
+  <meta name="theme-color" content="#f5f8fc">
   <script src="/static/theme.js"></script>
   <title>UiHound · UI 猎犬</title>
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
@@ -21,6 +21,7 @@
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/></symbol>
     <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="i-bounds" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="2 2"/><path d="M6 12s2.2-3.5 6-3.5 6 3.5 6 3.5-2.2 3.5-6 3.5S6 12 6 12z"/><circle cx="12" cy="12" r="1.4"/></symbol>
     <symbol id="i-clear" viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6m4-6v6"/></symbol>
     <symbol id="i-hierarchy" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13M3 4v2m0 5v2m0 5v2"/></symbol>
     <symbol id="i-color" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 0-4c-2 0-2-3 0-3h4a4 4 0 0 0 4-4c0-4-5-7-9-7z"/><circle cx="7" cy="10" r=".7"/><circle cx="10" cy="6" r=".7"/><circle cx="15" cy="7" r=".7"/></symbol>
@@ -53,7 +54,7 @@
           <button id="interaction-mode" class="mode-button" title="remote：scrcpy 远程交互" aria-label="remote scrcpy 远程交互" aria-pressed="false" data-device disabled><svg><use href="#i-remote"/></svg></button>
         </div>
         <span id="screen-size">等待连接</span>
-        <button id="toggle-bounds" class="icon-button" title="显示 / 隐藏节点虚线边框" aria-label="节点虚线边框" aria-pressed="true"><svg><use href="#i-expand"/></svg></button>
+        <button id="toggle-bounds" class="icon-button" title="隐藏节点虚线边框" aria-label="隐藏节点虚线边框" aria-pressed="true"><svg><use href="#i-bounds"/></svg></button>
         <span id="mode-hint" class="visually-hidden">静态画面 · 页面变化后点击刷新</span>
       </div>
       <div id="device-viewport" class="device-viewport">

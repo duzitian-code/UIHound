@@ -15,12 +15,12 @@
       }
     },
   };
-  let saved = 'dark';
+  let saved = 'light';
   try {
     saved = localStorage.getItem('uihound-theme') || saved;
   } catch (error) {
     theme.error = `无法读取主题偏好：${error.message}`;
   }
-  theme.set(saved === 'light' ? 'light' : 'dark', false);
+  theme.set(saved === 'dark' ? 'dark' : 'light', false);
   window.UiHoundTheme = theme;
 }());

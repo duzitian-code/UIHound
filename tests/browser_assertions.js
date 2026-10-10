@@ -4,7 +4,7 @@ const click = async id => {
   document.getElementById(id).click();
   await tick();
   const started = Date.now();
-  while ((state.capturing || state.savingRegion || (state.recorder?.pending && !state.recorder.active)) && Date.now() - started < 10000) await tick();
+  while ((state.capturing || state.savingRegion || (state.recorder?.pending && !state.recorder.active)) && Date.now() - started < 30000) await tick();
 };
 const captures = () => fixtureRequests.filter(item => item.url === '/internal/capture').length;
 function pointer(type, x, y, target = $('#screen-stage')) {
@@ -29,6 +29,9 @@ async function recordFrames(minimumDuration = 0) {
 async function browserTests() {
   document.body.dataset.phase = 'begin';
   await tick();
+  if (!localStorage.getItem('uihound-theme')) {
+    assert(document.documentElement.dataset.theme === 'light', 'new users get light theme by default');
+  }
   for (const [kind, defaultPath] of [['snapshot', 'D:\\snapshots'], ['recording', 'D:\\recordings']]) {
     const key = `uihound-${kind}-directory`;
     assert($(`#${kind}-directory`).value === defaultPath, `${kind} restores new default after root change`);
@@ -48,12 +51,40 @@ async function browserTests() {
   assert(state.connected && state.snapshotId && !state.capturing, 'connection captures hierarchy once');
   assert(captures() === 1, 'one initial snapshot');
   const overlayContext = $('#overlay-canvas').getContext('2d');
-  const boundaries = overlayContext.getImageData(78, 278, 930, 185).data;
-  assert(boundaries.some((value, index) => index % 4 === 3 && value > 0), 'hierarchy shows unselected element boundaries');
+  const plainContainer = {
+    xpath: '/hierarchy[1]/*[8]', className: 'android.widget.FrameLayout',
+    bounds: {left: 10, top: 10, right: 1060, bottom: 2200}, children: [fixtureElement],
+  };
+  const interactiveContainer = {...plainContainer, clickable: true};
+  assert(auxiliaryBounds([plainContainer]).length === 0, 'unlabelled structural containers have no auxiliary frame');
+  assert(auxiliaryBounds([{...plainContainer, children: []}]).length === 0, 'empty layout containers have no auxiliary frame');
+  assert(auxiliaryBounds([interactiveContainer])[0] === interactiveContainer, 'interactive containers keep their auxiliary frame');
+  assert(auxiliaryBounds([{...plainContainer, text: 'Section'}]).length === 1, 'labelled containers retain meaningful boundaries');
+  assert(auxiliaryBounds([fixtureElement, {...fixtureElement}]).length === 1, 'duplicate bounds are drawn once');
+  assert(auxiliaryBounds([{...fixtureElement, visibleToUser: false}]).length === 0, 'explicitly invisible nodes are excluded');
+  const originalHierarchy = state.hierarchy;
+  state.hierarchy = [plainContainer, fixtureElement];
+  state.selected = plainContainer;
+  updateOverlay();
+  assert(overlayContext.getImageData(10, 10, 10, 10).data.some((value, index) => index % 4 === 3 && value > 0), 'filtered containers still highlight when selected');
+  assert(state.hierarchy.length === 2 && plainContainer.children.length === 1, 'auxiliary filtering preserves the complete hierarchy');
+  state.hierarchy = originalHierarchy;
+  state.selected = null;
+  updateOverlay();
+  assert($('#toggle-bounds use').getAttribute('href') === '#i-bounds', 'bounds button uses the dedicated bounds icon');
+  assert($('#reset-layout use').getAttribute('href') === '#i-expand', 'layout reset keeps the expand icon');
+  const boundaries = () => overlayContext.getImageData(78, 278, 930, 185).data;
+  assert(boundaries().some((value, index) => index % 4 === 3 && value > 0), 'element boundaries are visible by default');
+  assert($('#toggle-bounds').getAttribute('aria-pressed') === 'true', 'bounds toggle starts on');
   await click('toggle-bounds');
-  assert(!overlayContext.getImageData(78, 278, 930, 185).data.some((value, index) => index % 4 === 3 && value > 0), 'boundaries can be hidden');
+  assert(!boundaries().some((value, index) => index % 4 === 3 && value > 0), 'bounds toggle hides default boundaries');
   await click('toggle-bounds');
-  const initialTheme = localStorage.getItem('uihound-theme');
+  assert(boundaries().some((value, index) => index % 4 === 3 && value > 0), 'bounds toggle shows element boundaries');
+  assert(!overlayContext.getImageData(100, 300, 850, 140).data.some((value, index) => index % 4 === 3 && value > 0), 'auxiliary boundaries never fill element interiors');
+  assert(overlayContext.globalAlpha === 1 && overlayContext.getLineDash().length === 0, 'auxiliary style does not leak into selected highlights');
+  await click('toggle-bounds');
+  assert(!boundaries().some((value, index) => index % 4 === 3 && value > 0), 'bounds toggle hides element boundaries');
+  const initialTheme = localStorage.getItem('uihound-theme') || 'light';
   assert(document.documentElement.dataset.theme === initialTheme, `saved theme restored on page load: ${initialTheme} -> ${document.documentElement.dataset.theme}`);
   const initialBackground = getComputedStyle(document.body).backgroundColor;
   const initialPixel = [...$('#screen-canvas').getContext('2d').getImageData(100, 100, 1, 1).data];

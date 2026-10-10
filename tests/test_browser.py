@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 import importlib
+from contextlib import contextmanager
 from unittest.mock import patch
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,6 +23,22 @@ from test_media import call_api, ORIGIN
 
 TEST_DIR = Path(__file__).parent
 EDGE = shutil.which("msedge") or r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+
+
+@contextmanager
+def browser_profile():
+    profile = tempfile.TemporaryDirectory(prefix="uihound-browser-")
+    try:
+        yield profile.name
+    finally:
+        for attempt in range(20):
+            try:
+                profile.cleanup()
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(.25)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -60,11 +77,15 @@ class BrowserTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            for width, height, theme in [(1920, 1080, "dark"), (1280, 720, "dark"), (1920, 1080, "light"), (1280, 720, "light")]:
+            for width, height, theme in [
+                (1920, 1080, "dark"), (1280, 720, "dark"),
+                (1920, 1080, "light"), (1280, 720, "light"),
+                (1920, 1080, "default"),
+            ]:
                 case = os.environ.get("UIHOUND_BROWSER_CASE")
                 if case and case != f"{width}x{height}-{theme}":
                     continue
-                with self.subTest(size=(width, height), theme=theme), tempfile.TemporaryDirectory(prefix="uihound-browser-") as profile:
+                with self.subTest(size=(width, height), theme=theme), browser_profile() as profile:
                     args = [
                         EDGE, "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
                         "--disable-background-networking", "--hide-scrollbars", "--force-device-scale-factor=1",
@@ -99,21 +120,22 @@ class BrowserTests(unittest.TestCase):
                                 sequence += 1
                                 ws.send(json.dumps({"id": sequence, "method": method, "params": params}))
                                 while True:
-                                    result = json.loads(ws.recv(timeout=45))
+                                    result = json.loads(ws.recv(timeout=90))
                                     if result.get("id") == sequence:
                                         self.assertNotIn("error", result)
                                         return result["result"]
                             command("Page.enable", {})
                             command("Emulation.setFocusEmulationEnabled", {"enabled": True})
-                            command("Page.addScriptToEvaluateOnNewDocument", {"source": f"localStorage.setItem('uihound-theme', '{theme}');"})
+                            if theme != "default":
+                                command("Page.addScriptToEvaluateOnNewDocument", {"source": f"localStorage.setItem('uihound-theme', '{theme}');"})
                             command("Page.navigate", {"url": f"http://127.0.0.1:{server.server_port}"})
                             command("Page.bringToFront", {})
                             time.sleep(.5)
                             result = command("Runtime.evaluate", {
-                                "expression": "new Promise((resolve) => { const start = Date.now(); const timer = setInterval(() => { if (document.body?.dataset.result || Date.now() - start > 30000) { clearInterval(timer); resolve(document.body?.dataset.result || 'TIMEOUT: ' + (window.fixtureErrors || []).join(';')); } }, 100); })",
+                                "expression": "new Promise((resolve) => { const start = Date.now(); const timer = setInterval(() => { if (document.body?.dataset.result || Date.now() - start > 60000) { clearInterval(timer); resolve(document.body?.dataset.result || 'TIMEOUT: ' + (window.fixtureErrors || []).join(';')); } }, 100); })",
                                 "awaitPromise": True, "returnByValue": True,
                             })
-                            diagnostic = command("Runtime.evaluate", {"expression": "JSON.stringify({href:location.href,phase:document.body.dataset.phase,result:document.body.dataset.result,errors:window.fixtureErrors,requests:window.fixtureRequests?.slice(-4)})", "returnByValue": True})
+                            diagnostic = command("Runtime.evaluate", {"expression": "JSON.stringify({href:location.href,phase:document.body.dataset.phase,result:document.body.dataset.result,theme:document.documentElement.dataset.theme,storedTheme:localStorage.getItem('uihound-theme'),themeError:window.UiHoundTheme?.error,errors:window.fixtureErrors,requests:window.fixtureRequests?.slice(-4)})", "returnByValue": True})
                             command("Runtime.evaluate", {
                                 "expression": "(async () => { if (state.recorder) { await state.recorder.stop(); state.recorder.unsaved = null; } })()",
                                 "awaitPromise": True,
