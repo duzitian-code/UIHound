@@ -63,7 +63,7 @@ class MediaTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix="uihound-media-test-")
         self.addCleanup(temp.cleanup)
-        base = Path(temp.name)
+        base = Path(temp.name).resolve()
         self.snapshots = base / "snapshots"
         self.recordings = base / "recordings"
         self.snapshots.mkdir()
@@ -90,6 +90,25 @@ class MediaTests(unittest.TestCase):
         self.assertIn("new+%231.PNG", result["files"][0]["url"])
         self.assertEqual(call_api(result["files"][0]["url"]), (200, b"newer"))
         self.assertEqual(call_api(url("/internal/media/list", kind="recording"))[1]["directory"], str(self.recordings))
+
+    @unittest.skipUnless(os.name == "nt", "Windows short paths")
+    def test_windows_short_path_alias(self):
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(self.snapshots), buffer, len(buffer))
+        self.assertGreater(length, 0)
+        self.assertLess(length, len(buffer))
+        alias = Path(buffer.value)
+        file = self.snapshots / "image.png"
+        file.write_bytes(b"png")
+        self.assertEqual(call_api(url("/internal/media/file", kind="snapshot", path=str(alias / file.name))),
+                         (200, b"png"))
+        self.assertEqual(call_api(url("/internal/media/file", kind="snapshot", path=str(alias / "missing.png")))[0],
+                         404)
+        status, result = call_api("/internal/media/directory", "POST",
+                                  {"kind": "snapshot", "path": str(alias / "new-folder")}, headers=ORIGIN)
+        self.assertEqual((status, result), (200, {"directory": str(self.snapshots / "new-folder")}))
 
     def test_rejects_invalid_kind_traversal_suffix_and_links(self):
         valid = self.snapshots / "valid.png"

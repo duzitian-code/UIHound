@@ -51,22 +51,22 @@ def _safe_path(root: Path, value: str | None, *, directory: bool) -> Path:
         raise HTTPException(status_code=400, detail="文件路径必须为绝对路径")
     candidate = requested if requested.is_absolute() else root / requested
     candidate = Path(os.path.abspath(candidate))
-    if candidate != root and root not in candidate.parents:
+    resolved = candidate.resolve()
+    if resolved != root and root not in resolved.parents:
         raise HTTPException(status_code=400, detail="路径超出允许的媒体根目录")
-    current = root
-    for part in candidate.relative_to(root).parts:
-        if any(char in part for char in '<>:"|?*') or part.endswith((" ", ".")):
+    # Inspect the original path before canonicalizing Windows 8.3 aliases.
+    for current in (candidate, *candidate.parents):
+        if any(char in current.name for char in '<>:"|?*') or current.name.endswith((" ", ".")):
             raise HTTPException(status_code=400, detail="路径包含非法文件名字符")
-        current = current / part
         try:
             stat = current.lstat()
         except FileNotFoundError:
             continue
         if current.is_symlink() or (getattr(stat, "st_file_attributes", 0) & 0x400):
             raise HTTPException(status_code=400, detail="不允许操作链接或重解析点")
-    if candidate.resolve() != candidate:
-        raise HTTPException(status_code=400, detail="路径解析到不允许的位置")
-    return candidate
+        if current.resolve() == root:
+            break
+    return resolved
 
 
 def _directory(kind: str, value: str | None, *, create: bool = False) -> Path:
