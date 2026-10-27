@@ -31,6 +31,8 @@ XML = """<hierarchy rotation="0"><node class="android.widget.FrameLayout" bounds
 def call_api(path, method="GET", data=None, headers=None):
     async def call():
         messages = []
+        request_sent = False
+        response_complete = asyncio.Event()
         target, _, query = path.partition("?")
         scope = {
             "type": "http", "http_version": "1.1", "asgi": {"version": "3.0"},
@@ -41,12 +43,19 @@ def call_api(path, method="GET", data=None, headers=None):
         }
 
         async def receive():
-            return {"type": "http.request", "body": json.dumps(data).encode() if data is not None else b"", "more_body": False}
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": json.dumps(data).encode() if data is not None else b"", "more_body": False}
+            await response_complete.wait()
+            return {"type": "http.disconnect"}
 
         async def send(message):
             messages.append(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                response_complete.set()
 
-        await web.app(scope, receive, send)
+        await asyncio.wait_for(web.app(scope, receive, send), timeout=10)
         status = next(message["status"] for message in messages if message["type"] == "http.response.start")
         body = b"".join(message.get("body", b"") for message in messages)
         return status, body
@@ -61,7 +70,7 @@ class BackendTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="uihound-test-")
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.settings_patch = patch.object(config, "SNAPSHOT_DIR", self.root)
         self.settings_patch.start()
         self.addCleanup(self.settings_patch.stop)
@@ -178,7 +187,7 @@ class BackendTests(unittest.TestCase):
         for path, method in [("/internal/tree", "POST"), ("/api/hierarchy", "GET")]:
             self.assertEqual(call_api(path, method)[1]["node_count"], 5)
         for path in ["/internal/settings", "/api/settings"]:
-            self.assertEqual(call_api(path)[1]["snapshot_directory"], str(self.root.resolve()))
+            self.assertEqual(Path(call_api(path)[1]["snapshot_directory"]).resolve(), self.root)
         status, result = call_api("/device/status")
         self.assertEqual(status, 200)
         self.assertEqual(result["device_serial"], result["serial"])
@@ -227,9 +236,32 @@ class BackendTests(unittest.TestCase):
         self.assertIn(b"/static/app.js?v=", html)
         for name in ["app.js", "style.css", "logo.svg", "theme.js", "recording.js", "media.js"]:
             self.assertIn(f"/static/{name}?v=".encode(), html)
-            self.assertEqual(call_api("/static/" + name)[0], 200)
+            status, content = call_api("/static/" + name)
+            self.assertEqual(status, 200)
+            self.assertEqual(content, (config.STATIC_DIR / name).read_bytes())
         paths = web.app.openapi()["paths"]
         self.assertEqual(set(paths) - {"/"}, {"/device/status", "/snapshot/full", "/snapshot/element", "/snapshot/region"})
+
+    def test_api_transport_sends_body_once_and_waits_for_complete_response(self):
+        async def app(scope, receive, send):
+            request = await receive()
+            self.assertEqual(json.loads(request["body"]), {"value": 1})
+            disconnect = asyncio.create_task(receive())
+            try:
+                await asyncio.sleep(0)
+                self.assertFalse(disconnect.done())
+                await send({"type": "http.response.start", "status": 200})
+                await send({"type": "http.response.body", "body": b"first", "more_body": True})
+                await asyncio.sleep(0)
+                self.assertFalse(disconnect.done())
+                await send({"type": "http.response.body", "body": b"last", "more_body": False})
+                self.assertEqual(await asyncio.wait_for(disconnect, 1), {"type": "http.disconnect"})
+            finally:
+                disconnect.cancel()
+                await asyncio.gather(disconnect, return_exceptions=True)
+
+        with patch.object(web, "app", app):
+            self.assertEqual(call_api("/transport", "POST", {"value": 1}), (200, b"firstlast"))
 
     def test_settings_environment(self):
         with patch.dict("os.environ", {

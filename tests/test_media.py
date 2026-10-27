@@ -36,14 +36,21 @@ def call_api(path, method="GET", data=None, *, raw=None, headers=(), client="127
              "more_body": False},
         ])
         messages = []
+        response_complete = asyncio.Event()
 
         async def receive():
-            return next(incoming)
+            message = next(incoming, None)
+            if message is not None:
+                return message
+            await response_complete.wait()
+            return {"type": "http.disconnect"}
 
         async def send(message):
             messages.append(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                response_complete.set()
 
-        await app(scope, receive, send)
+        await asyncio.wait_for(app(scope, receive, send), timeout=10)
         status = next(item["status"] for item in messages if item["type"] == "http.response.start")
         body = b"".join(item.get("body", b"") for item in messages)
         try:

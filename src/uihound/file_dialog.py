@@ -32,7 +32,27 @@ finally:
     try:
         options = {}
         command = [sys.executable, "-c", script, str(directory), kind]
-        if os.name == "nt":
+        if sys.platform == "darwin":
+            mac_script = """
+function run(argv) {
+    const app = Application.currentApplication();
+    app.includeStandardAdditions = true;
+    try {
+        const selected = app.chooseFile({
+            withPrompt: 'UiHound - Select ' + argv[1],
+            defaultLocation: Path(argv[0]),
+            ofType: argv[1] === 'image' ? ['png', 'jpg', 'jpeg', 'webp'] : ['xml'],
+            multipleSelectionsAllowed: false
+        });
+        return JSON.stringify(selected.toString());
+    } catch (error) {
+        if (error.errorNumber === -128) return JSON.stringify('');
+        throw error;
+    }
+}
+"""
+            command = ["/usr/bin/osascript", "-l", "JavaScript", "-e", mac_script, str(directory), kind]
+        elif os.name == "nt":
             # Disable the Vista dialog's remembered-folder behavior; honor InitialDirectory on every invocation.
             windows_script = r"""
 $ErrorActionPreference = 'Stop'
@@ -75,6 +95,8 @@ try {
         raise RuntimeError("文件选择窗口超时，请重新选择") from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(f"无法打开系统文件选择窗口，请确认服务运行在桌面会话：{exc.stderr.strip()}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"无法启动系统文件选择窗口：{exc}") from exc
     value = json.loads(result.stdout)
     if not value:
         return {"cancelled": True}

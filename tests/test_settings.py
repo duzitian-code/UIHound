@@ -115,7 +115,10 @@ with patch.object(Path, 'home', return_value=Path(sys.argv[1])):
         self.assertFalse(config.PREFERENCES_FILE.exists())
 
     def assert_picker_directory(self, run, kind):
-        if os.name == "nt":
+        if sys.platform == "darwin":
+            self.assertEqual(run.call_args.args[0][:3], ["/usr/bin/osascript", "-l", "JavaScript"])
+            self.assertEqual(run.call_args.args[0][-2:], [str(config.IMPORT_DIR.resolve()), kind])
+        elif os.name == "nt":
             self.assertEqual(run.call_args.kwargs["env"]["UIHOUND_PICKER_DIRECTORY"], str(config.IMPORT_DIR.resolve()))
             self.assertEqual(run.call_args.kwargs["env"]["UIHOUND_PICKER_KIND"], kind)
             script = run.call_args.args[0][-1]
@@ -153,6 +156,42 @@ with patch.object(Path, 'home', return_value=Path(sys.argv[1])):
                 call_api("/internal/capture/select-file", "POST", {"kind": "xml"}, headers=ORIGIN)
                 self.assert_picker_directory(run, "xml")
                 self.assertTrue(other.is_dir())
+
+    def test_macos_native_picker_paths_types_and_cancel(self):
+        image = self.root / 'image with spaces.png'
+        image.write_bytes(b"selected image bytes")
+        xml = self.root / "quoted 'report'.xml"
+        xml.write_bytes(b"\xef\xbb\xbf<hierarchy/>")
+        with patch.object(file_dialog.sys, "platform", "darwin"), patch.object(file_dialog.subprocess, "run") as run:
+            for kind, path in [("image", image), ("xml", xml)]:
+                with self.subTest(kind=kind):
+                    run.return_value.stdout = json.dumps(str(path))
+                    result = file_dialog.choose_file(kind)
+                    self.assertFalse(result["cancelled"])
+                    self.assertEqual(result["name"], path.name)
+                    self.assertEqual(result["directory"], str(config.IMPORT_DIR.resolve()))
+                    self.assert_picker_directory(run, kind)
+                    command = run.call_args.args[0]
+                    script = command[4]
+                    self.assertIn("defaultLocation: Path(argv[0])", script)
+                    self.assertIn("['png', 'jpg', 'jpeg', 'webp'] : ['xml']", script)
+                    self.assertIn("multipleSelectionsAllowed: false", script)
+                    self.assertIn("error.errorNumber === -128", script)
+                    self.assertNotIn(str(path), script)
+                    self.assertNotIn("creationflags", run.call_args.kwargs)
+                    self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
+                    if kind == "image":
+                        self.assertEqual(base64.b64decode(result["content"]), image.read_bytes())
+                    else:
+                        self.assertEqual(result["content"], "<hierarchy/>")
+            run.return_value.stdout = '""\n'
+            self.assertEqual(file_dialog.choose_file("xml"), {"cancelled": True})
+            run.side_effect = subprocess.CalledProcessError(1, "osascript", stderr="Not authorized")
+            with self.assertRaisesRegex(RuntimeError, "Not authorized"):
+                file_dialog.choose_file("xml")
+            run.side_effect = FileNotFoundError("osascript unavailable")
+            with self.assertRaisesRegex(RuntimeError, "osascript unavailable"):
+                file_dialog.choose_file("xml")
 
     def test_native_picker_errors_are_reported(self):
         with patch.object(file_dialog.subprocess, "run", side_effect=subprocess.TimeoutExpired("picker", 300)):
