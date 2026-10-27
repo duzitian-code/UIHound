@@ -1,6 +1,12 @@
 window.fixtureRequests = [];
 window.fixtureErrors = [];
 window.fixtureConnected = false;
+window.fixtureDisplayId = 0;
+window.fixtureArchives = [];
+window.fixtureSettings = {
+  project_directory: 'D:\\UiHound', snapshot_directory: 'D:\\snapshots', recording_directory: 'D:\\recordings',
+  inspection_directory: 'D:\\UiHound\\snapshots', import_directory: 'D:\\UiHound\\snapshots', overrides: {},
+};
 window.fixtureSaveFails = false;
 window.fixtureConfirm = true;
 window.confirm = () => window.fixtureConfirm;
@@ -63,7 +69,23 @@ window.fetch = async (url, options = {}) => {
   let result;
   if (url === '/device/status') result = {connected: fixtureConnected, serial: 'demo-device'};
   else if (url === '/internal/scanAdb') result = {devices: [{serial: 'demo-device'}]};
-  else if (url === '/internal/settings' || url === '/internal/settings/snapshot-directory') result = {snapshot_directory: 'D:\\snapshots', recording_directory: 'D:\\recordings'};
+  else if (url === '/internal/settings' || url === '/internal/settings/snapshot-directory') result = fixtureSettings;
+  else if (url === '/internal/settings/directories') {
+    const root = data.project_directory;
+    fixtureSettings = {
+      project_directory: root,
+      snapshot_directory: data.snapshot_directory || `${root}\\screenshots`,
+      recording_directory: data.recording_directory || `${root}\\recordings`,
+      inspection_directory: data.inspection_directory || `${root}\\snapshots`,
+      import_directory: data.import_directory || data.inspection_directory || `${root}\\snapshots`,
+      overrides: data,
+    };
+    result = fixtureSettings;
+  }
+  else if (url === '/internal/capture/select-file') result = {
+    cancelled: false, name: data.kind === 'image' ? 'screen.png' : 'hierarchy.xml',
+    content: data.kind === 'image' ? fixtureImage.toDataURL('image/png').split(',')[1] : '<hierarchy><node display-id="3"/></hierarchy>',
+  };
   else if (url.startsWith('/internal/media/list?')) {
     const params = new URL(url, location.href).searchParams;
     result = {files: fixtureMedia[params.get('kind')], directory: params.get('directory')};
@@ -84,12 +106,29 @@ window.fetch = async (url, options = {}) => {
     result = {path: 'D:\\recordings\\record.webm', name: 'record.webm', url: URL.createObjectURL(data)};
     fixtureMedia.recording.unshift(result);
   }
-  else if (url === '/internal/connect') { fixtureConnected = true; result = {connected: true, serial: 'demo-device'}; }
+  else if (url === '/internal/connect') { fixtureConnected = true; fixtureDisplayId = 0; result = {connected: true, serial: 'demo-device'}; }
+  else if (url === '/internal/displays') result = {displays: [0, 3], display_id: fixtureDisplayId};
+  else if (url === '/internal/display') { fixtureDisplayId = data.display_id; result = {display_id: data.display_id}; }
   else if (url === '/internal/disconnect') { fixtureConnected = false; result = {message: 'disconnected'}; }
-  else if (url === '/internal/capture') result = {
-    tree: data.hierarchy ? fixtureTree : null,
-    elements: data.hierarchy ? [fixtureElement] : [], empty: !data.hierarchy,
+  else if (url.startsWith('/internal/capture/archives?')) result = {
+    directory: new URL(url, location.href).searchParams.get('directory') || 'D:\\snapshots\\inspections', files: fixtureArchives,
+  };
+  else if (url === '/internal/capture/archive/save') {
+    result = {directory: data.directory || fixtureSettings.inspection_directory, path: `${fixtureSettings.inspection_directory}\\capture_demo`, name: 'capture_demo'};
+    fixtureArchives.push(result);
+  }
+  else if (url === '/internal/capture/archive/load') result = {
+    tree: fixtureTree, elements: [fixtureElement], empty: false, node_count: 34,
+    snapshot_id: `snapshot-${fixtureRequests.length}`, display_id: 3,
+    image: fixtureImage.toDataURL('image/png').split(',')[1], width: 1080, height: 2400,
+    xml: '<hierarchy><node display-id="3"/></hierarchy>',
+  };
+  else if (url === '/internal/capture' || url === '/internal/capture/import') result = {
+    tree: data.hierarchy || data.xml ? fixtureTree : null,
+    elements: data.hierarchy || data.xml ? [fixtureElement] : [], empty: !(data.hierarchy || data.xml),
     snapshot_id: `snapshot-${fixtureRequests.length}`, captured_at: new Date().toISOString(),
+    node_count: data.hierarchy || data.xml ? 34 : 0,
+    display_id: data.display_id ?? fixtureDisplayId,
     image: fixtureImage.toDataURL('image/png').split(',')[1], width: 1080, height: 2400,
   };
   else if (url === '/internal/capture/find') result = {count: 1, elements: [fixtureElement]};

@@ -28,22 +28,31 @@
     <symbol id="i-remote" viewBox="0 0 24 24"><path d="M3 3h18v14H3zM12 17v4m-5 0h10"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12l1 1M5 19l1-1M18 6l1-1"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11z"/></symbol>
+    <!-- Bootstrap Icons gear; MIT license: bootstrap-icons-LICENSE.txt -->
+    <symbol id="i-settings" viewBox="0 0 16 16">
+      <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492M5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0"/>
+      <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115z"/>
+    </symbol>
   </svg>
   <header class="topbar">
     <a class="brand" href="/" aria-label="UiHound 首页"><img src="/static/logo.svg" width="34" height="34" alt=""><span><strong>UiHound</strong><small>UI 猎犬 · Android Inspector</small></span></a>
     <span id="app-version" class="app-version" title="当前运行版本">v<!--UIHOUND_VERSION--></span>
     <div class="topbar-actions">
+      <button id="import-capture" class="button button-muted" title="导入图片和 XML 离线分析">导入</button>
+      <button id="save-capture" class="button button-muted" title="成对保存当前画面和 XML">保存分析</button>
       <button id="refresh-capture" class="button button-muted" title="重新获取当前画面与层级" data-device disabled><svg><use href="#i-refresh"/></svg>刷新画面</button>
       <button id="reset-layout" class="icon-button" title="重置布局" aria-label="重置布局"><svg><use href="#i-expand"/></svg></button>
       <button id="theme-toggle" class="icon-button" title="切换到白天模式" aria-label="切换到白天模式" aria-pressed="false"><svg><use href="#i-sun"/></svg></button>
     </div>
     <div class="connection">
-      <select id="device-select" aria-label="在线 ADB 设备"><option value="">选择在线设备</option></select>
+      <input id="device-select" list="device-options" aria-label="选择或输入 ADB 设备" placeholder="选择设备 / 输入 IP:端口" autocomplete="off" spellcheck="false">
+      <datalist id="device-options"></datalist>
+      <label class="display-select" title="选择屏幕，自动获取对应画面和节点">Display <select id="display-id" aria-label="Display ID" disabled><option value="0">0（主屏）</option></select></label>
       <button id="refresh-devices" class="icon-button" title="扫描 ADB 设备" aria-label="扫描 ADB 设备"><svg><use href="#i-refresh"/></svg></button>
-      <input id="device-address" type="text" placeholder="设备序列号 / 127.0.0.1:5555" aria-label="设备序列号或网络地址">
       <button id="connect-device" class="button button-primary">连接设备</button>
       <button id="disconnect-device" class="button button-muted" disabled>断开</button>
     </div>
+    <button id="open-settings" class="icon-button" title="设置" aria-label="设置"><svg><use href="#i-settings"/></svg></button>
   </header>
   <main class="workspace">
     <section id="preview-column" class="preview-column panel">
@@ -131,12 +140,10 @@
         <div class="tool-section"><h2>工作区</h2><p>设备在左，属性和节点树在右。两条分隔线均可拖动。</p><button id="reset-layout-tools" class="button button-muted">恢复默认布局</button></div>
       </section>
       <section id="pane-captures" class="inspector-pane captures-pane hidden" role="tabpanel" aria-labelledby="tab-captures">
-        <div class="snapshot-path"><label for="snapshot-directory">截图保存目录</label><div class="path-controls"><input id="snapshot-directory" type="text" aria-label="截图保存目录" spellcheck="false"><button id="save-snapshot-path" class="button button-muted">应用</button></div><p id="snapshot-path-hint">限配置的截图根目录及其子目录</p></div>
         <div class="capture-heading"><h2>截图文件</h2><div class="media-actions"><button id="open-snapshots" class="button button-muted">打开目录</button><button id="refresh-snapshots" class="button button-muted">刷新列表</button><button id="delete-snapshots" class="button button-muted">删除全部</button></div></div><p class="capture-help">当前目录文件；删除会移除磁盘文件。复制后可在本机文件管理器使用系统粘贴快捷键粘贴 PNG。</p>
         <div id="captures-empty" class="detail-placeholder">截图后在此预览，无需打开保存文件夹</div><div id="snapshot-card" class="snapshot-card hidden"><div id="snapshot-previews" class="snapshot-previews"></div></div>
       </section>
       <section id="pane-recordings" class="inspector-pane captures-pane hidden" role="tabpanel" aria-labelledby="tab-recordings">
-        <div class="snapshot-path"><label for="recording-directory">录屏保存目录</label><div class="path-controls"><input id="recording-directory" type="text" aria-label="录屏保存目录" spellcheck="false"><button id="save-recording-path" class="button button-muted">应用</button></div></div>
         <div class="capture-heading"><h2>录屏文件</h2><div class="media-actions"><button id="open-recordings" class="button button-muted">打开目录</button><button id="refresh-recordings" class="button button-muted">刷新列表</button><button id="delete-recordings" class="button button-muted">删除全部</button></div></div>
         <p class="capture-help">侧栏圆形按钮开始 / 停止录屏。录制 scrcpy 原始画面，不含节点框；无音频 WebM。切换模式或断开会停止并保存。关闭页面前请等待保存完成。</p>
         <button id="retry-recording" class="button button-primary hidden">重试保存上次录屏</button>
@@ -149,6 +156,30 @@
     <span id="accessibility-status">层级：待获取</span><span id="stream-status" class="stream-status">未连接</span><span id="mouse-coordinate">设备坐标：--</span><span id="region-coordinate">框选区域：--</span><span id="gesture-status">hierarchy</span><span id="screen-message" class="status-message"></span>
     <span id="recording-status"></span>
   </footer>
+  <dialog id="capture-library">
+    <h2>导入图片和 XML</h2>
+    <p>分别选择同一画面的图片和 XML，然后点击导入。系统选择窗口默认打开设置中的导入目录。</p>
+    <p id="import-directory-hint"></p>
+    <div class="import-file-row"><button id="choose-import-image" class="button button-muted">选择图片</button><span id="import-image-name">未选择图片</span></div>
+    <div class="import-file-row"><button id="choose-import-xml" class="button button-muted">选择 XML</button><span id="import-xml-name">未选择 XML</span></div>
+    <div class="capture-library-actions">
+      <button id="confirm-import" class="button button-primary" disabled>导入</button>
+      <button id="close-capture-library" class="button button-muted">关闭</button>
+    </div>
+    <p id="capture-library-status" role="status"></p>
+  </dialog>
+  <dialog id="settings-dialog">
+    <h2>设置 · 项目文件目录</h2>
+    <form id="directory-settings-form">
+      <label>项目根目录<input id="project-directory" type="text" required spellcheck="false"></label>
+      <label>截图目录<input id="snapshot-directory" type="text" spellcheck="false"></label>
+      <label>录屏目录<input id="recording-directory" type="text" spellcheck="false"></label>
+      <label>快照目录<input id="capture-directory" type="text" spellcheck="false"></label>
+      <label>导入目录<input id="import-directory" type="text" spellcheck="false"></label>
+      <p id="directory-settings-status" role="status"></p>
+      <div class="capture-library-actions"><button id="save-directory-settings" class="button button-primary" type="submit">保存设置</button><button id="close-settings" class="button button-muted" type="button">关闭</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/color.js"></script>
   <script src="/static/remote.js"></script>

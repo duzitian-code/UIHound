@@ -19,6 +19,7 @@ from pathlib import Path
 
 from adbutils import adb
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from PIL import Image
 from starlette.websockets import WebSocketState
 
 from .inspector import inspector
@@ -150,8 +151,10 @@ class Controls:
 
 
 class ScrcpySession:
-    def __init__(self, serial: str):
+    def __init__(self, serial: str, display_id: int = 0, *, full_resolution: bool = False):
         self.serial = serial
+        self.display_id = display_id
+        self.full_resolution = full_resolution
         self.device = adb.device(serial=serial)
         self.scid = secrets.randbelow(0x7fffffff) + 1
         self.remote = f"localabstract:scrcpy_{self.scid:08x}"
@@ -177,11 +180,14 @@ class ScrcpySession:
             options = [
                 f"CLASSPATH={target}", "app_process", "/", "com.genymobile.scrcpy.Server",
                 VERSION, f"scid={self.scid:08x}", "log_level=warn", "audio=false",
-                "video_codec=h264", f"max_size={settings.scrcpy_max_size}",
+                "video_codec=h264", f"max_size={0 if self.full_resolution else settings.scrcpy_max_size}",
                 f"max_fps={settings.scrcpy_max_fps}", f"video_bit_rate={settings.scrcpy_bit_rate}",
                 "tunnel_forward=true", "send_frame_meta=true", "control=true",
                 "clipboard_autosync=false", "power_off_on_close=false",
+                f"display_id={self.display_id}",
             ]
+            if self.full_resolution:
+                options.append("power_on=false")
             self.shell = self.device.shell(" ".join(options), stream=True)
             deadline = time.monotonic() + 10
             while True:
@@ -238,6 +244,43 @@ class ScrcpySession:
             del self.target
 
 
+def capture_frame(serial: str, display_id: int) -> Image.Image:
+    """Capture a native-size frame through Android's scrcpy display surface."""
+    import av
+
+    session = ScrcpySession(serial, display_id, full_resolution=True)
+    try:
+        session.start()
+        if session.video is None:
+            raise RuntimeError("scrcpy did not provide a screenshot video stream")
+        decoder = av.CodecContext.create("h264", "r")
+        deadline = time.monotonic() + 10
+        config = b""
+        total = 0
+        while time.monotonic() < deadline:
+            session.video.settimeout(max(.1, deadline - time.monotonic()))
+            pts, size = struct.unpack(">QI", recv_exact(session.video, 12))
+            if not 0 < size <= MAX_PACKET:
+                raise RuntimeError("Invalid scrcpy screenshot packet length")
+            total += size
+            if total > 32 * 1024 * 1024:
+                raise RuntimeError("scrcpy screenshot exceeded 32 MiB")
+            packet = recv_exact(session.video, size)
+            if pts & (1 << 63):
+                config += packet
+                if len(config) > 65536:
+                    raise RuntimeError("scrcpy screenshot codec config too large")
+                continue
+            for frame in decoder.decode(av.Packet(config + packet)):
+                return frame.to_image().convert("RGB")
+            config = b""
+        raise RuntimeError("Timed out waiting for a scrcpy screenshot")
+    except av.error.FFmpegError as exc:
+        raise RuntimeError(f"scrcpy screenshot decode failed: {exc}") from exc
+    finally:
+        session.close()
+
+
 async def read_exact(sock: socket.socket, size: int) -> bytes:
     loop = asyncio.get_running_loop()
     data = bytearray()
@@ -254,8 +297,8 @@ async def stream(session: ScrcpySession, websocket: WebSocket, connected_device:
     config = b""
     codec = ""
     while True:
-        if inspector.device is not connected_device or inspector.serial != session.serial:
-            raise ConnectionError("Connected device changed; remote session ended")
+        if inspector.device is not connected_device or inspector.serial != session.serial or inspector.display_id != session.display_id:
+            raise ConnectionError("Connected device or display changed; remote session ended")
         header = await read_exact(session.video, 12)
         pts, size = struct.unpack(">QI", header)
         if not 0 < size <= MAX_PACKET:
@@ -285,8 +328,8 @@ async def receive_controls(session: ScrcpySession, websocket: WebSocket, connect
     try:
         while True:
             raw = await websocket.receive_text()
-            if inspector.device is not connected_device or inspector.serial != session.serial:
-                raise ConnectionError("Connected device changed; remote session ended")
+            if inspector.device is not connected_device or inspector.serial != session.serial or inspector.display_id != session.display_id:
+                raise ConnectionError("Connected device or display changed; remote session ended")
             if len(raw) > 2048:
                 await websocket.send_json({"type": "error", "message": "Remote control message too large"})
                 continue
@@ -313,9 +356,9 @@ async def run_control(operation, *args) -> None:
 
 
 async def watch_device(session: ScrcpySession, connected_device: object) -> None:
-    while inspector.device is connected_device and inspector.serial == session.serial:
+    while inspector.device is connected_device and inspector.serial == session.serial and inspector.display_id == session.display_id:
         await asyncio.sleep(.5)
-    raise ConnectionError("Connected device changed; remote session ended")
+    raise ConnectionError("Connected device or display changed; remote session ended")
 
 
 @router.get("/remote/status")
@@ -350,10 +393,11 @@ async def remote_websocket(websocket: WebSocket) -> None:
         await websocket.close(code=1011)
         return
     session = ScrcpySession(serial)
+    session.display_id = getattr(inspector, "display_id", 0)
     start_task: asyncio.Task | None = None
     tasks: list[asyncio.Task] = []
     try:
-        await websocket.send_json({"type": "status", "message": f"正在准备 scrcpy {VERSION}；首次使用将下载并校验官方服务端"})
+        await websocket.send_json({"type": "status", "message": f"正在准备 scrcpy {VERSION} · display {session.display_id}"})
         start_task = asyncio.create_task(asyncio.to_thread(session.start))
         await asyncio.shield(start_task)
         tasks = [

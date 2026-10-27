@@ -5,7 +5,10 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from fractions import Fraction
 
+import av
+from PIL import Image
 from uihound import remote
 
 
@@ -56,6 +59,7 @@ class RemoteProtocolTests(unittest.TestCase):
 
     def test_failed_forward_does_not_remove_existing_forward(self):
         session = remote.ScrcpySession("serial")
+        session.display_id = 3
         session.device = unittest.mock.Mock()
         session.device.forward.side_effect = RuntimeError("occupied")
         with patch.object(remote, "server_path", return_value=Path(__file__)):
@@ -67,7 +71,7 @@ class RemoteProtocolTests(unittest.TestCase):
         async def run():
             left, right = socket.socketpair()
             left.setblocking(False)
-            session = unittest.mock.Mock(video=left, width=720, height=1280, serial="device")
+            session = unittest.mock.Mock(video=left, width=720, height=1280, serial="device", display_id=0)
             messages = []
 
             class WebSocket:
@@ -87,8 +91,10 @@ class RemoteProtocolTests(unittest.TestCase):
                 with patch.dict(remote.inspector.__dict__, {"device": device, "serial": "device"}):
                     task = asyncio.create_task(remote.stream(session, WebSocket(), device))
                     right.sendall(packet(1 << 63, sps + pps) + packet((1 << 62) | 42, frame))
-                    while len(messages) < 2:
+                    while len(messages) < 2 and not task.done():
                         await asyncio.sleep(.01)
+                    if task.done():
+                        task.result()
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                 self.assertEqual(messages[0], {"type": "config", "codec": "avc1.42c01e", "width": 720, "height": 1280})
@@ -143,7 +149,7 @@ class RemoteProtocolTests(unittest.TestCase):
         session.device.forward_remove.assert_called_once()
 
     def test_forward_handshake_retries_until_device_socket_is_ready(self):
-        session = remote.ScrcpySession("serial")
+        session = remote.ScrcpySession("serial", display_id=3, full_resolution=True)
         session.device = unittest.mock.Mock()
         stale_video, stale_control = unittest.mock.Mock(), unittest.mock.Mock()
         video, control = unittest.mock.Mock(), unittest.mock.Mock()
@@ -159,7 +165,54 @@ class RemoteProtocolTests(unittest.TestCase):
         stale_video.close.assert_called_once()
         stale_control.close.assert_called_once()
         self.assertEqual((session.width, session.height), (720, 1280))
+        self.assertIn("display_id=3", session.device.shell.call_args.args[0])
+        self.assertIn("max_size=0", session.device.shell.call_args.args[0])
+        self.assertIn("power_on=false", session.device.shell.call_args.args[0])
         session.close()
+
+    def test_display_switch_ends_old_remote_session(self):
+        async def run():
+            device = object()
+            session = remote.ScrcpySession("device", display_id=0)
+            with patch.dict(remote.inspector.__dict__, {"device": device, "serial": "device", "display_id": 3}):
+                with self.assertRaises(ConnectionError):
+                    await remote.watch_device(session, device)
+                session.control = unittest.mock.Mock()
+                websocket = unittest.mock.Mock(receive_text=unittest.mock.AsyncMock(return_value='{"type":"key","key":"home"}'))
+                with self.assertRaises(ConnectionError):
+                    await remote.receive_controls(session, websocket, device)
+                session.control.sendall.assert_not_called()
+        asyncio.run(run())
+
+    def test_screenshot_decodes_h264_and_always_closes_session(self):
+        encoder = av.CodecContext.create("libx264", "w")
+        encoder.width, encoder.height = 64, 48
+        encoder.pix_fmt = "yuv420p"
+        encoder.time_base = Fraction(1, 30)
+        encoder.options = {"tune": "zerolatency"}
+        frame = av.VideoFrame.from_image(Image.new("RGB", (64, 48), "green"))
+        payload = b"".join(bytes(packet) for packet in encoder.encode(frame))
+        self.assertTrue(payload)
+        session = unittest.mock.Mock()
+        with patch.object(remote, "ScrcpySession", return_value=session) as factory, \
+             patch.object(remote, "recv_exact", side_effect=[struct.pack(">QI", 1 << 62, len(payload)), payload]):
+            image = remote.capture_frame("serial", 3)
+        self.assertEqual(image.size, (64, 48))
+        self.assertGreater(image.getpixel((20, 20))[1], 100)
+        factory.assert_called_once_with("serial", 3, full_resolution=True)
+        session.close.assert_called_once()
+        session.reset_mock()
+        with patch.object(remote, "ScrcpySession", return_value=session), \
+             patch.object(remote, "recv_exact", return_value=struct.pack(">QI", 0, remote.MAX_PACKET + 1)):
+            with self.assertRaisesRegex(RuntimeError, "packet length"):
+                remote.capture_frame("serial", 1)
+        session.close.assert_called_once()
+        session.reset_mock()
+        session.start.side_effect = RuntimeError("capture forbidden")
+        with patch.object(remote, "ScrcpySession", return_value=session):
+            with self.assertRaisesRegex(RuntimeError, "capture forbidden"):
+                remote.capture_frame("serial", 1)
+        session.close.assert_called_once()
 
     def test_cancelled_websocket_waits_for_start_before_cleanup(self):
         async def run():

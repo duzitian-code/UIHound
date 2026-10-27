@@ -29,6 +29,7 @@ button, input, select, textarea { transition: background .15s, border-color .15s
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [role="separator"]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .svg-library { position: absolute; width: 0; height: 0; overflow: hidden; }
+#open-settings svg { fill: currentColor; stroke: none; }
 h1, h2, h3, p { margin: 0; }
 input, select, textarea { min-width: 0; color: var(--text); border: 1px solid var(--border); border-radius: 4px; background: var(--input); }
 input, select { height: 28px; padding: 0 8px; }
@@ -43,8 +44,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .app-version { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .topbar-actions { display: flex; gap: 6px; align-items: center; }
 .connection { display: flex; align-items: center; justify-content: flex-end; gap: 7px; margin-left: auto; min-width: 0; }
-.connection input { width: clamp(170px, 17vw, 260px); }
+.connection input { width: clamp(160px, 19vw, 280px); }
 .connection select { width: clamp(130px, 11vw, 190px); }
+.connection .display-select { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.connection #display-id { width: 90px; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid transparent; border-radius: 4px; font-weight: 600; white-space: nowrap; }
 .button-primary { color: #071c31; background: #78b9fb; }
 .button-primary:hover:not(:disabled) { background: #9acdff; }
@@ -217,6 +220,13 @@ h1 { font-size: 14px; font-weight: 600; } h2 { font-size: 13px; font-weight: 600
 .toast.error { border-color: var(--red); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .hidden { display: none !important; }
+#capture-library, #settings-dialog { width: min(680px, 85vw); max-height: 80vh; overflow: auto; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+#capture-library::backdrop, #settings-dialog::backdrop { background: #0007; }
+#directory-settings-form label { display: grid; gap: 5px; margin: 12px 0; }
+#directory-settings-form input { width: 100%; }
+.import-file-row { display: flex; align-items: center; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+.import-file-row span { overflow-wrap: anywhere; }
+.capture-library-actions { display: flex; gap: 8px; margin-top: 12px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 @media (max-width: 1250px) {
   .topbar { gap: 10px; padding: 0 12px; }

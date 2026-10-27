@@ -30,6 +30,11 @@ const state = {
   color: null,
   wheelGesture: null,
   showBounds: true,
+  displayId: 0,
+  importedFiles: null,
+  lastInspection: null,
+  directories: null,
+  importSelection: {},
 };
 
 const layoutLimits = {
@@ -63,61 +68,31 @@ async function api(url, options = {}) {
   return data;
 }
 
-async function restoreMediaDirectory(kind, defaultPath) {
-  const key = `uihound-${kind}-directory`;
-  let saved;
-  try {
-    saved = localStorage.getItem(key);
-  } catch (error) {
-    toast(`无法读取保存路径设置：${error.message}`, true);
-  }
-  if (!saved || saved === defaultPath) return defaultPath;
-  const response = await fetch('/internal/media/directory', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ kind, path: saved }),
-  });
-  const result = await response.json();
-  if (response.ok) return result.directory;
-  if (response.status !== 400) throw new Error(result.detail || '恢复保存路径失败');
-  localStorage.removeItem(key);
-  toast(`${kind === 'snapshot' ? '截图' : '录屏'}旧路径不可用，已切换到默认目录：${result.detail}`, true);
-  return defaultPath;
-}
+const directoryFields = {
+  project_directory: '#project-directory', snapshot_directory: '#snapshot-directory',
+  recording_directory: '#recording-directory', inspection_directory: '#capture-directory',
+  import_directory: '#import-directory',
+};
 
-async function initializeSnapshotDirectory() {
-  try {
-    const { snapshot_directory: defaultPath } = await api('/internal/settings');
-    const path = await restoreMediaDirectory('snapshot', defaultPath);
-    $('#snapshot-directory').value = path;
-    $('#snapshot-path-hint').textContent = `默认目录：${defaultPath}`;
-    if (path !== defaultPath) await applySnapshotDirectory(path, false);
-  } catch (error) {
-    $('#snapshot-path-hint').textContent = `读取默认路径失败：${error.message}`;
+function showDirectorySettings(settings) {
+  for (const [key, selector] of Object.entries(directoryFields)) {
+    $(selector).value = settings[key];
+    $(selector).dataset.inherited = String(key !== 'project_directory' && !settings.overrides?.[key]);
   }
 }
 
-async function applySnapshotDirectory(path = $('#snapshot-directory').value, notify = true) {
-  const directory = path.trim();
-  if (!directory) return toast('请填写截图保存目录');
-  try {
-    const result = await api('/internal/settings/snapshot-directory', {
-      method: 'POST',
-      body: JSON.stringify({ path: directory }),
-    });
-    $('#snapshot-directory').value = result.snapshot_directory;
-    $('#snapshot-path-hint').textContent = `当前目录：${result.snapshot_directory}`;
-    try {
-      localStorage.setItem('uihound-snapshot-directory', result.snapshot_directory);
-    } catch (error) {
-      throw new Error(`路径已应用，但无法记住设置：${error.message}`);
-    }
-    if (notify) toast('截图保存路径已更新');
-    if (notify) await state.snapshots.refresh();
-  } catch (error) {
-    $('#snapshot-path-hint').textContent = error.message;
-    if (notify) toast(`保存路径无效：${error.message}`);
+function updateInheritedDirectories() {
+  const project = $('#project-directory').value.trim().replace(/[\\/]+$/, '');
+  const separator = project.includes('\\') ? '\\' : '/';
+  for (const [selector, child] of [['#snapshot-directory', 'screenshots'], ['#recording-directory', 'recordings'], ['#capture-directory', 'snapshots']]) {
+    if ($(selector).dataset.inherited === 'true') $(selector).value = `${project}${separator}${child}`;
   }
+  if ($('#import-directory').dataset.inherited === 'true') $('#import-directory').value = $('#capture-directory').value;
+}
+
+async function loadDirectorySettings() {
+  state.directories = await api('/internal/settings');
+  showDirectorySettings(state.directories);
 }
 
 function toast(message, error = /失败|异常|无效|无法|未找到|未安装|未启用|不存在/.test(message)) {
@@ -225,7 +200,31 @@ function setConnection(connected, serial = '') {
   $('#connection-label').textContent = connected ? `已连接 ${serial}` : '未连接设备';
   $('#connection-label').title = serial;
   $('#disconnect-device').disabled = !connected;
+  $('#display-id').disabled = !connected && !state.importedFiles;
   document.querySelectorAll('[data-device]').forEach((button) => { button.disabled = !connected; });
+  if (!connected && state.mode === 'remote' && state.lastInspection) {
+    state.remote?.stop();
+    state.remote = null;
+    state.recorder?.stop();
+    state.captureSerial += 1;
+    showInspection(state.lastInspection).then(() => {
+      $('#stream-status').textContent = '离线快照 · 保留最近层级画面';
+    }).catch(error => toast(`恢复快照失败：${error.message}`, true));
+    return;
+  }
+  if (!connected && state.snapshotId) {
+    state.recorder?.stop();
+    cancelPointer();
+    state.remote?.stop();
+    state.remote = null;
+    state.captureSerial += 1;
+    state.capturing = false;
+    $('#screen-empty').classList.add('hidden');
+    $('#screen-wrap').classList.remove('hidden');
+    $('#stream-status').textContent = '离线快照 · 可继续分析';
+    updateOfflineControls();
+    return;
+  }
   $('#screen-empty').classList.toggle('hidden', connected);
   $('#screen-wrap').classList.toggle('hidden', !connected);
   if (!connected) {
@@ -270,6 +269,85 @@ function setConnection(connected, serial = '') {
   updateLocatorButton();
 }
 
+function updateOfflineControls() {
+  $('#display-id').disabled = !state.connected && !state.importedFiles;
+  for (const id of ['save-full', 'region-mode']) $(`#${id}`).disabled = !state.snapshotId;
+  $('#save-element').disabled = !state.selected || !state.snapshotId;
+  $('#search-form button').disabled = !state.snapshotId;
+  for (const id of ['expand-tree', 'collapse-tree', 'locator-mode', 'color-mode']) {
+    $(`#${id}`).disabled = !state.connected && !state.snapshotId;
+  }
+  $('#click-element').disabled = !state.connected || !state.selected;
+}
+
+async function showInspection(result) {
+  const requestId = ++state.captureSerial;
+  const epoch = state.connectionEpoch;
+  const bytes = Uint8Array.from(atob(result.image), char => char.charCodeAt(0));
+  const frame = await createImageBitmap(new Blob([bytes], {type: 'image/png'}));
+  if (requestId !== state.captureSerial || epoch !== state.connectionEpoch) { frame.close(); return; }
+  state.capturing = false;
+  state.frozen = false;
+  state.regionMode = false;
+  clearRegion();
+  state.snapshotId = result.snapshot_id;
+  state.lastInspection = result;
+  state.mode = 'hierarchy';
+  state.locatorMode = true;
+  state.displayId = result.display_id ?? state.displayId;
+  $('#display-id').value = state.displayId;
+  clearSelection();
+  state.matches = [];
+  state.color?.reset();
+  renderFrame(frame);
+  state.hierarchy = result.elements;
+  state.tree = result.tree;
+  state.treeExpanded = collectExpandedNodes(result.tree);
+  renderHierarchy();
+  renderResults();
+  $('#tree-node-count').textContent = result.node_count.toLocaleString();
+  $('#screen-empty').classList.add('hidden');
+  $('#screen-wrap').classList.remove('hidden');
+  activateTab('detail');
+  updateLocatorButton();
+  updateOfflineControls();
+  updateOverlay();
+}
+
+async function applyDisplay() {
+  const input = $('#display-id');
+  if (input.disabled) return;
+  const id = Number(input.value);
+  if (!Number.isInteger(id) || id < 0 || id > 2147483647 || !input.value) {
+    input.value = state.displayId;
+    return toast('Display ID 必须是有效的非负整数', true);
+  }
+  input.disabled = true;
+  const requestId = ++state.captureSerial;
+  const epoch = state.connectionEpoch;
+  try {
+    await state.recorder?.stop();
+    if (requestId !== state.captureSerial || epoch !== state.connectionEpoch) return;
+    state.remote?.stop();
+    state.remote = null;
+    if (state.importedFiles) {
+      const result = await api('/internal/capture/import', {
+        method: 'POST', body: JSON.stringify({...state.importedFiles, display_id: id}),
+      });
+      if (requestId !== state.captureSerial || epoch !== state.connectionEpoch) return;
+      await showInspection(result);
+    } else {
+      await api('/internal/display', {method: 'POST', body: JSON.stringify({display_id: id})});
+      if (requestId !== state.captureSerial || epoch !== state.connectionEpoch) return;
+      state.displayId = id;
+      await switchMode(state.mode);
+    }
+  } catch (error) {
+    input.value = state.displayId;
+    toast(`切换屏幕失败：${error.message}`, true);
+  } finally { input.disabled = !state.connected && !state.importedFiles; }
+}
+
 async function disconnect() {
   try {
     await state.recorder?.stop();
@@ -285,10 +363,8 @@ async function scanDevices() {
   try {
     const { devices } = await api('/internal/scanAdb', { method: 'POST' });
     const select = $('#device-select');
-    const prior = select.value;
-    select.replaceChildren(new Option(devices.length ? '选择在线设备' : '未发现在线设备', ''));
-    for (const device of devices) select.add(new Option(device.serial, device.serial));
-    if (devices.some((device) => device.serial === prior)) select.value = prior;
+    $('#device-options').replaceChildren(...devices.map(device => new Option(device.serial, device.serial)));
+    if (!select.value && devices.length === 1) select.value = devices[0].serial;
     if (!devices.length) toast('未发现在线 ADB 设备');
   } catch (error) {
     toast(`ADB 扫描失败：${error.message}`);
@@ -306,7 +382,10 @@ async function connect(serial) {
     });
     setConnection(false);
     setConnection(true, status.serial);
-    $('#device-address').value = serial.trim();
+    state.importedFiles = null;
+    state.lastInspection = null;
+    await loadDisplays();
+    $('#device-select').value = serial.trim();
     toast('设备连接成功');
     await switchMode('hierarchy');
   } catch (error) {
@@ -315,6 +394,17 @@ async function connect(serial) {
   } finally {
     $('#connect-device').disabled = false;
   }
+}
+
+async function loadDisplays() {
+  const displays = await api('/internal/displays');
+  state.displayId = displays.display_id;
+  setDisplayOptions(displays.displays, state.displayId);
+}
+
+function setDisplayOptions(ids, selected) {
+  $('#display-id').replaceChildren(...ids.map(id => new Option(id === 0 ? '0（主屏）' : String(id), String(id))));
+  $('#display-id').value = selected;
 }
 
 async function refreshScreen() {
@@ -384,7 +474,17 @@ async function loadHierarchy() {
 }
 
 async function switchMode(mode) {
-  if (!state.connected) return;
+  if (!state.connected) {
+    if (state.snapshotId && mode !== 'remote') {
+      state.mode = mode;
+      state.locatorMode = mode === 'hierarchy';
+      activateTab(mode === 'color' ? 'color' : 'detail');
+      updateLocatorButton();
+      updateOfflineControls();
+      updateOverlay();
+    }
+    return;
+  }
   const requestId = ++state.captureSerial;
   const epoch = state.connectionEpoch;
   await state.recorder?.stop();
@@ -434,6 +534,9 @@ async function switchMode(mode) {
     const bytes = Uint8Array.from(atob(result.image), char => char.charCodeAt(0));
     const frame = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
     if (requestId !== state.captureSerial) { frame.close(); return; }
+    state.lastInspection = result;
+    state.displayId = result.display_id ?? state.displayId;
+    $('#display-id').value = state.displayId;
     state.snapshotId = result.snapshot_id;
     clearSelection();
     state.matches = [];
@@ -450,6 +553,9 @@ async function switchMode(mode) {
     $('#tree-empty').classList.toggle('error', result.empty);
     if (result.empty) $('#tree-empty').textContent = 'UI 树为空，请检查当前用户无障碍服务是否启用';
     $('#stream-status').textContent = `快照 ${new Date(result.captured_at).toLocaleTimeString()}`;
+    if (result.screenshot_method === 'scrcpy') {
+      $('#stream-status').textContent += ' · scrcpy 回退（有损取帧）';
+    }
     $('#stream-status').classList.remove('live', 'frozen');
     $('#search-count').textContent = '仅搜索当前快照';
     updateTreeHighlights();
@@ -575,7 +681,7 @@ function selectElement(element, source = 'element') {
   state.selected = { ...selected, _selector: selected._selector || selectorFor(selected) };
   if (source !== 'refresh') activateTab('detail');
   $('#detail-subtitle').textContent = `${selected.className || selected.nodeName || 'UI 元素'} · ${boundsText(selected)}`;
-  $('#click-element').disabled = !element.bounds || state.mode !== 'hierarchy';
+  $('#click-element').disabled = !state.connected || !element.bounds || state.mode !== 'hierarchy';
   $('#save-element').disabled = !element.bounds || state.mode !== 'hierarchy' || !state.snapshotId;
   renderDetail(state.selected);
   updateOverlay();
@@ -688,8 +794,7 @@ async function search(event) {
   try {
     const snapshotId = state.snapshotId;
     const result = await api('/internal/capture/find', { method: 'POST', body: JSON.stringify({ query, snapshot_id: snapshotId }) });
-    if (!state.connected || epoch !== state.connectionEpoch) return;
-    if (snapshotId !== state.snapshotId) return;
+    if (snapshotId !== state.snapshotId || epoch !== state.connectionEpoch) return;
     state.searchQuery = query;
     state.matches = result.elements;
     $('#search-count').textContent = `找到 ${result.count} 个元素`;
@@ -901,6 +1006,7 @@ async function inspectAt(x, y) {
 }
 
 async function action(action, extra = {}) {
+  if (!state.connected) return toast('离线分析模式不能操作设备', true);
   if (state.mode === 'remote' && ['home', 'back', 'recent'].includes(action)) {
     state.remote?.send({ type: 'key', key: action });
     return;
@@ -927,7 +1033,7 @@ async function saveSnapshot(kind, type) {
     $('#save-region').disabled = true;
   }
   try {
-    const directory = $('#snapshot-directory').value.trim();
+    const directory = state.directories?.snapshot_directory;
     if (!directory) return toast('请先设置截图保存路径');
     if (state.capturing) return toast('正在获取画面，请稍后截图');
     let result;
@@ -1023,31 +1129,164 @@ function updateFreezeStatus() {
   $('#stream-status').classList.toggle('live', !state.frozen);
 }
 
+function setImportFile(kind, file) {
+  state.importSelection[kind] = file;
+  $(`#import-${kind}-name`).textContent = file.name;
+  $('#confirm-import').disabled = !(state.importSelection.image && state.importSelection.xml);
+}
+
+async function selectImportFile(kind) {
+  const selection = state.importSelection;
+  const button = $(`#choose-import-${kind}`);
+  button.disabled = true;
+  $('#capture-library-status').textContent = '请在服务所在电脑的系统窗口中选择文件';
+  try {
+    const result = await api('/internal/capture/select-file', {
+      method: 'POST', body: JSON.stringify({kind}),
+    });
+    if (selection !== state.importSelection) return;
+    if (!result.cancelled) {
+      setImportFile(kind, result);
+      if (result.directory) $('#import-directory-hint').textContent = `默认目录：${result.directory}`;
+    }
+    $('#capture-library-status').textContent = result.cancelled ? '已取消选择，可重新选择' : '';
+  } catch (error) { $('#capture-library-status').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
+async function activateImportedCapture(result, files, name) {
+  if (state.connected) await disconnect();
+  if (state.connected) throw Error('无法断开设备，导入已取消');
+  const xmlDocument = new DOMParser().parseFromString(files.xml, 'application/xml');
+  const ids = [...new Set([0, result.display_id, ...[...xmlDocument.querySelectorAll('[display-id]')]
+    .map(node => Number(node.getAttribute('display-id')))
+    .filter(id => Number.isInteger(id) && id >= 0 && id <= 2147483647)])].sort((a, b) => a - b);
+  state.importedFiles = files;
+  setDisplayOptions(ids, result.display_id);
+  await showInspection(result);
+  $('#stream-status').textContent = `离线导入 · ${name}`;
+  toast('已导入图片和 XML，可离线分析');
+}
+
 function bindEvents() {
+  $('#display-id').addEventListener('change', applyDisplay);
+  $('#import-capture').addEventListener('click', async () => {
+    state.importSelection = {};
+    for (const kind of ['image', 'xml']) {
+      $(`#import-${kind}-name`).textContent = kind === 'image' ? '未选择图片' : '未选择 XML';
+    }
+    $('#confirm-import').disabled = true;
+    $('#capture-library').showModal();
+    for (const kind of ['image', 'xml']) $(`#choose-import-${kind}`).disabled = true;
+    $('#capture-library-status').textContent = '正在读取已保存的导入目录…';
+    try {
+      await loadDirectorySettings();
+      $('#import-directory-hint').textContent = `默认目录：${state.directories.import_directory}`;
+      $('#capture-library-status').textContent = '';
+      for (const kind of ['image', 'xml']) $(`#choose-import-${kind}`).disabled = false;
+    } catch (error) { $('#capture-library-status').textContent = `读取目录失败：${error.message}`; }
+  });
+  $('#close-capture-library').addEventListener('click', () => $('#capture-library').close());
+  $('#open-settings').addEventListener('click', async () => {
+    $('#settings-dialog').showModal();
+    try { await loadDirectorySettings(); }
+    catch (error) { $('#directory-settings-status').textContent = error.message; }
+  });
+  $('#close-settings').addEventListener('click', () => $('#settings-dialog').close());
+  $('#project-directory').addEventListener('input', updateInheritedDirectories);
+  for (const [key, selector] of Object.entries(directoryFields)) {
+    if (key === 'project_directory') continue;
+    $(selector).addEventListener('input', () => {
+      $(selector).dataset.inherited = String(!$(selector).value.trim());
+      if (key === 'inspection_directory' && $('#import-directory').dataset.inherited === 'true') {
+        $('#import-directory').value = $(selector).value;
+      }
+    });
+  }
+  $('#directory-settings-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    $('#save-directory-settings').disabled = true;
+    try {
+      if (state.recorder?.pending || state.recorder?.unsaved) throw Error('请先停止并保存录屏，再修改目录');
+      const values = Object.fromEntries(Object.entries(directoryFields).map(([key, selector]) => {
+        const input = $(selector);
+        const value = input.value.trim();
+        if (input.dataset.inherited === 'true') return [key, ''];
+        const previous = state.directories;
+        return [key, value === previous[key] ? previous.overrides?.[key] || value : value];
+      }));
+      state.directories = await api('/internal/settings/directories', {method: 'POST', body: JSON.stringify(values)});
+      showDirectorySettings(state.directories);
+      $('#directory-settings-status').textContent = '设置已保存并生效，已有文件未移动';
+      await Promise.all([state.snapshots.refresh(), state.recordings.refresh()]);
+    } catch (error) { $('#directory-settings-status').textContent = `保存失败：${error.message}`; }
+    finally { $('#save-directory-settings').disabled = false; }
+  });
+  $('#save-capture').addEventListener('click', async () => {
+    $('#save-capture').disabled = true;
+    const epoch = state.connectionEpoch;
+    const serial = state.captureSerial;
+    try {
+      let snapshotId = state.snapshotId;
+      if (state.connected && state.mode !== 'hierarchy') {
+        const capture = await api('/internal/capture', {method: 'POST', body: JSON.stringify({hierarchy: true})});
+        snapshotId = capture.snapshot_id;
+      }
+      if (!snapshotId) throw Error('请先获取 hierarchy 快照或导入图片和 XML');
+      if (epoch !== state.connectionEpoch || serial !== state.captureSerial) throw Error('设备或画面已变化，请重新保存');
+      const result = await api('/internal/capture/archive/save', {
+        method: 'POST', body: JSON.stringify({
+          snapshot_id: snapshotId,
+          directory: state.directories?.inspection_directory || null,
+        }),
+      });
+      toast(`图片和 XML 已保存：${result.path}`);
+    } catch (error) { toast(`保存失败：${error.message}`, true); }
+    finally { $('#save-capture').disabled = false; }
+  });
+  for (const kind of ['image', 'xml']) {
+    $(`#choose-import-${kind}`).addEventListener('click', () => selectImportFile(kind));
+  }
+  $('#confirm-import').addEventListener('click', async () => {
+    const {image, xml} = state.importSelection;
+    if (!image || !xml) return;
+    const epoch = state.connectionEpoch;
+    const requestId = ++state.captureSerial;
+    $('#confirm-import').disabled = true;
+    try {
+      const files = {image: image.content, xml: xml.content};
+      const document = new DOMParser().parseFromString(files.xml, 'application/xml');
+      if (document.querySelector('parsererror')) throw Error('XML 格式无效');
+      const displayIds = [...new Set([0, ...[...document.querySelectorAll('[display-id]')]
+        .map(node => Number(node.getAttribute('display-id')))
+        .filter(id => Number.isInteger(id) && id >= 0 && id <= 2147483647)])].sort((a, b) => a - b);
+      const displayId = displayIds.includes(state.displayId) ? state.displayId : displayIds[0];
+      const result = await api('/internal/capture/import', {
+        method: 'POST', body: JSON.stringify({...files, display_id: displayId}),
+      });
+      if (epoch !== state.connectionEpoch || requestId !== state.captureSerial) throw Error('设备或画面已变化，请重新导入');
+      await activateImportedCapture(result, files, `${image.name} · ${xml.name}`);
+      $('#capture-library').close();
+    } catch (error) { $('#capture-library-status').textContent = `导入失败：${error.message}`; }
+    finally { $('#confirm-import').disabled = false; }
+  });
   const mediaAction = handler => async () => {
     try { await handler(); } catch (error) { toast(error.message, true); }
   };
-  for (const [kind, library, input] of [
-    ['snapshots', state.snapshots, '#snapshot-directory'],
-    ['recordings', state.recordings, '#recording-directory'],
+  for (const [kind, library, key] of [
+    ['snapshots', state.snapshots, 'snapshot_directory'],
+    ['recordings', state.recordings, 'recording_directory'],
   ]) {
     $(`#delete-${kind}`).addEventListener('click', mediaAction(() => library.remove()));
     $(`#refresh-${kind}`).addEventListener('click', mediaAction(() => library.refresh()));
-    $(`#open-${kind}`).addEventListener('click', mediaAction(() => library.request('open-directory', { path: $(input).value })));
+    $(`#open-${kind}`).addEventListener('click', mediaAction(() => library.request('open-directory', { path: state.directories[key] })));
   }
-  $('#save-recording-path').addEventListener('click', mediaAction(async () => {
-    const result = await state.recordings.request('directory', { path: $('#recording-directory').value.trim() });
-    $('#recording-directory').value = result.directory;
-    localStorage.setItem('uihound-recording-directory', result.directory);
-    await state.recordings.refresh();
-    toast('录屏目录已更新');
-  }));
   $('#record-screen').addEventListener('click', mediaAction(async () => {
     if (state.recorder.pending) { await state.recorder.stop(); return; }
     if (state.recorder.unsaved) throw Error('上次录屏尚未保存，请先到录屏页重试');
     $('#record-screen').disabled = true;
     try {
-      const directory = await state.recordings.request('directory', { path: $('#recording-directory').value.trim() });
+      const directory = await state.recordings.request('directory', { path: state.directories.recording_directory });
       if (state.mode !== 'remote' || !state.remote?.ready) await switchMode('remote');
       const remote = state.remote;
       const deadline = Date.now() + 45000;
@@ -1056,7 +1295,6 @@ function bindEvents() {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       if (state.remote !== remote || !remote?.ready || !state.frame) throw Error('remote 未就绪，未开始录屏');
-      $('#recording-directory').value = directory.directory;
       await state.recorder.start(state.frame, directory.directory,
         () => state.connected && state.remote === remote && remote.ready && state.mode === 'remote');
     } finally {
@@ -1067,7 +1305,7 @@ function bindEvents() {
   $('#retry-recording').addEventListener('click', mediaAction(async () => {
     $('#retry-recording').disabled = true;
     try {
-      state.recorder.directory = $('#recording-directory').value.trim();
+      state.recorder.directory = state.directories.recording_directory;
       await state.recorder.upload();
       $('#retry-recording').classList.add('hidden');
       $('#recording-status').textContent = '已保存';
@@ -1108,7 +1346,7 @@ function bindEvents() {
   $('#clear-colors').addEventListener('click', () => state.color.clear());
   document.querySelectorAll('[data-tab]').forEach((button, index, buttons) => {
     button.addEventListener('click', () => {
-      if (button.dataset.tab === 'color' && state.connected && state.mode !== 'color') switchMode('color');
+      if (button.dataset.tab === 'color' && (state.connected || state.snapshotId) && state.mode !== 'color') switchMode('color');
       else activateTab(button.dataset.tab);
       const library = { captures: state.snapshots, recordings: state.recordings }[button.dataset.tab];
       library?.refresh().catch(error => toast(error.message, true));
@@ -1133,11 +1371,8 @@ function bindEvents() {
     });
   }
   $('#refresh-devices').addEventListener('click', scanDevices);
-  $('#connect-device').addEventListener('click', () => connect($('#device-address').value || $('#device-select').value));
-  $('#device-select').addEventListener('change', (event) => {
-    if (event.target.value) $('#device-address').value = event.target.value;
-  });
-  $('#device-address').addEventListener('keydown', (event) => {
+  $('#connect-device').addEventListener('click', () => connect($('#device-select').value));
+  $('#device-select').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') connect(event.target.value);
   });
   $('#freeze-screen').addEventListener('click', () => {
@@ -1193,17 +1428,13 @@ function bindEvents() {
     if (!state.region) return;
     saveSnapshot('region', '区域截图');
   });
-  $('#save-snapshot-path').addEventListener('click', () => applySnapshotDirectory());
-  $('#snapshot-directory').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') applySnapshotDirectory();
-  });
   $('#screen-stage').addEventListener('pointerenter', () => {
     if (state.mode === 'color' && !document.activeElement?.matches('input, textarea, select')) {
       $('#screen-stage').focus({ preventScroll: true });
     }
   });
   $('#screen-stage').addEventListener('pointermove', (event) => {
-    if (!state.connected || !state.width || state.capturing) return;
+    if ((!state.connected && !state.snapshotId) || !state.width || state.capturing) return;
     if (state.mode !== 'remote' && !state.snapshotId) return;
     const point = eventCoordinates(event);
     $('#mouse-coordinate').textContent = `设备坐标：x ${point.x} · y ${point.y}`;
@@ -1216,7 +1447,7 @@ function bindEvents() {
     }
   });
   $('#screen-stage').addEventListener('pointerdown', (event) => {
-    if (!state.connected || !state.width || state.capturing || event.button !== 0) return;
+    if ((!state.connected && !state.snapshotId) || !state.width || state.capturing || event.button !== 0) return;
     if (state.mode === 'remote' && (state.frozen || !state.remote?.ready)) return;
     if (state.mode !== 'remote' && !state.snapshotId) return;
     event.preventDefault();
@@ -1294,7 +1525,7 @@ function updateLocatorButton() {
   $('#freeze-screen').textContent = 'Ⅱ';
   $('#freeze-screen').setAttribute('aria-pressed', 'false');
   $('#screen-canvas').classList.toggle('interaction-mode', state.mode === 'remote');
-  $('#click-element').disabled = !state.selected || state.mode !== 'hierarchy';
+  $('#click-element').disabled = !state.connected || !state.selected || state.mode !== 'hierarchy';
   $('#save-element').disabled = !state.selected || state.mode !== 'hierarchy';
   updateRegionMode();
   $('#gesture-status').textContent = state.mode;
@@ -1353,11 +1584,11 @@ async function initialize() {
   updateThemeButton();
   state.snapshots = new window.MediaLibrary({
     kind: 'snapshot', root: $('#snapshot-previews'), count: $('#capture-count'), empty: $('#captures-empty'),
-    directory: () => $('#snapshot-directory').value, notify: toast,
+    directory: () => state.directories?.snapshot_directory, notify: toast,
   });
   state.recordings = new window.MediaLibrary({
     kind: 'recording', root: $('#recording-previews'), count: $('#recording-count'), empty: $('#recordings-empty'),
-    directory: () => $('#recording-directory').value, notify: toast,
+    directory: () => state.directories?.recording_directory, notify: toast,
   });
   state.recorder = new window.ScreenRecorder({
     notify: toast,
@@ -1371,7 +1602,6 @@ async function initialize() {
         status === 'saving' ? '正在保存录屏…' : status === 'unsaved' ? '录屏待保存' : '';
       $('#retry-recording').classList.toggle('hidden', status !== 'unsaved');
       $('#recording-directory').disabled = recording || status === 'saving';
-      $('#save-recording-path').disabled = recording || status === 'saving';
     },
     saved: async result => {
       state.recordings.add(result);
@@ -1385,16 +1615,15 @@ async function initialize() {
   });
   bindEvents();
   updateLocatorButton();
-  await Promise.all([scanDevices(), initializeSnapshotDirectory(), api('/device/status').then((status) => {
+  await Promise.all([scanDevices(), loadDirectorySettings().catch(error => toast(`读取目录设置失败：${error.message}`, true)), api('/device/status').then(async (status) => {
     if (status.connected) {
       setConnection(true, status.serial || '');
-      $('#device-address').value = status.serial || '';
-      loadHierarchy();
+      $('#device-select').value = status.serial || '';
+      await loadDisplays();
+      await loadHierarchy();
     }
   }).catch((error) => toast(`读取设备状态失败：${error.message}`))]);
   try {
-    const settings = await api('/internal/settings');
-    $('#recording-directory').value = await restoreMediaDirectory('recording', settings.recording_directory);
     await Promise.all([state.snapshots.refresh(), state.recordings.refresh()]);
   } catch (error) { toast(`读取媒体目录失败：${error.message}`, true); }
   setInterval(async () => {

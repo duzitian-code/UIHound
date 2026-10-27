@@ -17,6 +17,7 @@ dependencies = [
     "adbutils>=2.0,<3.0",
     "lxml>=4.9,<7",
     "Pillow>=10.0,<12.0",
+    "av>=12,<17",
 ]
 
 [project.scripts]

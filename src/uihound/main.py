@@ -17,9 +17,10 @@ import uvicorn
 
 from . import __version__, config, media
 from .inspector import inspector
-from .inspection import inspections
+from .inspection import inspections, list_archives
 from .remote import router as remote_router
 from .media import router as media_router
+from .file_dialog import choose_file
 
 
 config.SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -105,8 +106,35 @@ class CaptureRequest(BaseModel):
     hierarchy: bool = True
 
 
+class DisplayRequest(BaseModel):
+    display_id: int = Field(ge=0, le=2147483647)
+
+
+class ImportRequest(DisplayRequest):
+    display_id: int = Field(default=0, ge=0, le=2147483647)
+    image: str = Field(max_length=32 * 1024 * 1024)
+    xml: str = Field(min_length=1, max_length=8 * 1024 * 1024)
+
+
 class FrozenSearchRequest(SearchRequest):
     snapshot_id: str = Field(min_length=1, max_length=64)
+
+
+class ArchiveSaveRequest(BaseModel):
+    snapshot_id: str = Field(min_length=1, max_length=64)
+    directory: str | None = Field(default=None, max_length=2048)
+
+
+class DirectorySettingsRequest(BaseModel):
+    project_directory: str = Field(min_length=1, max_length=2048)
+    snapshot_directory: str = Field(default="", max_length=2048)
+    recording_directory: str = Field(default="", max_length=2048)
+    inspection_directory: str = Field(default="", max_length=2048)
+    import_directory: str = Field(default="", max_length=2048)
+
+
+class FileDialogRequest(BaseModel):
+    kind: str = Field(pattern="^(image|xml)$")
 
 
 class FrozenSnapshotRequest(BaseModel):
@@ -120,6 +148,8 @@ class FrozenSnapshotRequest(BaseModel):
 def invoke(operation: Any) -> Any:
     try:
         return operation()
+    except HTTPException:
+        raise
     except (ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -160,8 +190,20 @@ def device_status() -> dict[str, Any]:
 
 @app.get("/internal/settings", include_in_schema=False)
 @app.get("/api/settings", include_in_schema=False)
-def app_settings() -> dict[str, str]:
-    return {"snapshot_directory": str(config.SNAPSHOT_DIR.resolve()), "recording_directory": str(config.RECORDING_DIR.resolve())}
+def app_settings() -> dict[str, Any]:
+    return config.directory_settings()
+
+
+@app.post("/internal/settings/directories", include_in_schema=False)
+def set_directories(payload: DirectorySettingsRequest, request: Request) -> dict[str, Any]:
+    media._local_mutation(request)
+    return invoke(lambda: config.save_directories(payload.model_dump()))
+
+
+@app.post("/internal/capture/select-file", include_in_schema=False)
+def select_import_file(payload: FileDialogRequest, request: Request) -> dict[str, Any]:
+    media._local_mutation(request)
+    return invoke(lambda: choose_file(payload.kind))
 
 
 @app.post("/internal/settings/snapshot-directory", include_in_schema=False)
@@ -193,8 +235,50 @@ def connect_device(request: ConnectRequest) -> dict[str, Any]:
 
 @app.post("/internal/disconnect", include_in_schema=False)
 def disconnect_device() -> dict[str, str]:
-    inspections.clear()
     return inspector.disconnect()
+
+
+@app.get("/internal/displays", include_in_schema=False)
+def device_displays() -> dict[str, Any]:
+    return invoke(lambda: {"displays": inspector.displays(), "display_id": getattr(inspector, "display_id", 0)})
+
+
+@app.post("/internal/display", include_in_schema=False)
+def select_display(request: DisplayRequest) -> dict[str, int]:
+    def select() -> dict[str, int]:
+        if request.display_id not in inspector.displays():
+            raise ValueError(f"设备不存在屏幕 {request.display_id}")
+        inspector.display_id = request.display_id
+        return {"display_id": request.display_id}
+    return invoke(select)
+
+
+@app.post("/internal/capture/import", include_in_schema=False)
+def import_capture(request: ImportRequest) -> dict[str, Any]:
+    def load():
+        try:
+            data = base64.b64decode(request.image, validate=True)
+        except ValueError as exc:
+            raise ValueError("图片编码无效") from exc
+        return inspections.import_files(inspector, data, request.xml, request.display_id)
+    return invoke(load)
+
+
+@app.get("/internal/capture/archives", include_in_schema=False)
+def capture_archives(directory: str | None = Query(default=None, max_length=2048)) -> dict[str, Any]:
+    return invoke(lambda: list_archives(directory))
+
+
+@app.post("/internal/capture/archive/save", include_in_schema=False)
+def save_capture_archive(payload: ArchiveSaveRequest, request: Request) -> dict[str, str]:
+    media._local_mutation(request)
+    return invoke(lambda: inspections.save_archive(payload.snapshot_id, inspector, payload.directory))
+
+
+@app.post("/internal/capture/archive/load", include_in_schema=False)
+def load_capture_archive(payload: SnapshotPathRequest, request: Request) -> dict[str, Any]:
+    media._local_mutation(request)
+    return invoke(lambda: inspections.load_archive(inspector, payload.path))
 
 
 @app.post("/internal/capture", include_in_schema=False)
@@ -320,6 +404,13 @@ def click_element(request: ElementActionRequest) -> dict[str, str]:
     def click() -> dict[str, str]:
         if not request.selector:
             raise ValueError("请先选择元素")
+        if inspector.display_id:
+            elements = inspector.resolve_display(request.selector)
+            if not elements or not elements[0].get("bounds"):
+                raise ValueError("当前屏幕未找到可点击元素")
+            element = elements[0]
+            inspector.display_input("tap", str(element["centerX"]), str(element["centerY"]))
+            return {"message": "元素已点击"}
         inspector.native_selector(request.selector).click()
         return {"message": "元素已点击"}
     return invoke(click)
@@ -328,6 +419,8 @@ def click_element(request: ElementActionRequest) -> dict[str, str]:
 @app.post("/internal/inputText", include_in_schema=False)
 def input_text(request: ElementActionRequest) -> dict[str, str]:
     def send() -> dict[str, str]:
+        if inspector.display_id:
+            raise ValueError("副屏暂不支持 u2 文本输入，请使用设备输入法")
         if request.text is None:
             raise ValueError("请输入文本")
         if request.selector:
@@ -341,6 +434,8 @@ def input_text(request: ElementActionRequest) -> dict[str, str]:
 @app.post("/internal/clearText", include_in_schema=False)
 def clear_text(request: ElementActionRequest) -> dict[str, str]:
     def clear() -> dict[str, str]:
+        if inspector.display_id:
+            raise ValueError("副屏暂不支持 u2 清空文本，请使用设备输入法")
         if request.selector:
             target = inspector.native_selector(request.selector)
             if request.selector.strip().startswith(("/", "(")):
@@ -358,6 +453,11 @@ def clear_text(request: ElementActionRequest) -> dict[str, str]:
 def perform_action(request: ActionRequest) -> dict[str, str]:
     def perform() -> dict[str, str]:
         device = inspector.require_device()
+        if inspector.display_id and request.action in {"home", "back", "recent"}:
+            inspector.display_input("keyevent", {"home": "3", "back": "4", "recent": "187"}[request.action])
+            return {"message": "操作已完成"}
+        if inspector.display_id and request.action in {"input", "clear"}:
+            raise ValueError("副屏暂不支持 u2 文本输入，请使用设备输入法")
         if request.action == "back":
             device.press("back")
         elif request.action == "home":
@@ -368,15 +468,24 @@ def perform_action(request: ActionRequest) -> dict[str, str]:
             coordinates = (request.start_x, request.start_y, request.end_x, request.end_y)
             if any(value is None for value in coordinates):
                 raise ValueError("滑动操作需要起点和终点坐标")
-            device.swipe(*coordinates, duration=request.duration or 0.35)
+            if inspector.display_id:
+                inspector.display_input("swipe", *(str(value) for value in coordinates), str(round((request.duration or 0.35) * 1000)))
+            else:
+                device.swipe(*coordinates, duration=request.duration or 0.35)
         elif request.action == "long_click":
             if request.x is None or request.y is None:
                 raise ValueError("长按操作需要设备坐标")
-            device.long_click(request.x, request.y, duration=request.duration or 0.8)
+            if inspector.display_id:
+                inspector.display_input("swipe", str(request.x), str(request.y), str(request.x), str(request.y), str(round((request.duration or 0.8) * 1000)))
+            else:
+                device.long_click(request.x, request.y, duration=request.duration or 0.8)
         elif request.action == "click":
             if request.x is None or request.y is None:
                 raise ValueError("点击操作需要设备坐标")
-            device.click(request.x, request.y)
+            if inspector.display_id:
+                inspector.display_input("tap", str(request.x), str(request.y))
+            else:
+                device.click(request.x, request.y)
         elif request.action == "input":
             if request.text is None:
                 raise ValueError("请输入要发送的文本")

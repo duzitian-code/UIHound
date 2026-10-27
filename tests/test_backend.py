@@ -65,6 +65,10 @@ class BackendTests(unittest.TestCase):
         self.settings_patch = patch.object(config, "SNAPSHOT_DIR", self.root)
         self.settings_patch.start()
         self.addCleanup(self.settings_patch.stop)
+        for name, value in [("INSPECTION_DIR", self.root / "analysis"), ("IMPORT_DIR", self.root / "analysis")]:
+            directory_patch = patch.object(config, name, value)
+            directory_patch.start()
+            self.addCleanup(directory_patch.stop)
         self.inspector = Inspector()
         self.device = Mock()
         self.device.info = {"productName": "test"}

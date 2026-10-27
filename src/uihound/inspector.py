@@ -3,6 +3,7 @@ import base64
 import io
 import re
 import json
+import logging
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,10 +16,15 @@ from PIL import Image
 from . import config
 
 
+logger = logging.getLogger(__name__)
+
+
 class Inspector:
     def __init__(self) -> None:
         self.device: Any = None
         self.serial: str | None = None
+        self.display_id = 0
+        self.screenshot_method: str | None = None
 
     def adb_devices(self) -> list[dict[str, str]]:
         import subprocess
@@ -46,6 +52,7 @@ class Inspector:
             raise ValueError("请输入设备序列号或网络 ADB 地址")
         self.device = u2.connect(serial)
         self.serial = serial
+        self.display_id = 0
         status = self.status()
         if not status["connected"]:
             self.device = None
@@ -91,10 +98,78 @@ class Inspector:
         return self.device
 
     def screenshot(self) -> Image.Image:
-        image = self.require_device().screenshot()
-        if not isinstance(image, Image.Image):
-            raise RuntimeError("设备未返回有效截图")
-        return image
+        device = self.require_device()
+        self.screenshot_method = None
+        display_id = self.display_id
+        errors = []
+        from adbutils import AdbError
+
+        methods = [("ADB screencap", lambda: self._adb_screenshot(display_id))]
+        if display_id == 0:
+            methods.insert(0, ("uiautomator2", device.screenshot))
+        from .remote import capture_frame
+        methods.append(("scrcpy", lambda: capture_frame(self.serial, display_id)))
+        for name, capture in methods:
+            try:
+                image = capture()
+                if not isinstance(image, Image.Image) or not image.width or not image.height:
+                    raise RuntimeError("设备未返回有效截图")
+                if self.device is not device or self.display_id != display_id:
+                    raise RuntimeError("设备或屏幕已切换，请重新获取画面")
+                self.screenshot_method = name
+                return image
+            except (OSError, RuntimeError, ValueError, AdbError) as exc:
+                errors.append(f"{name}: {exc}")
+                logger.warning("Display %s screenshot via %s failed: %s", display_id, name, exc)
+                if self.device is not device or self.display_id != display_id:
+                    raise RuntimeError("设备或屏幕已切换，请重新获取画面") from exc
+        raise RuntimeError(f"屏幕 {display_id} 的所有截图方式均失败（可能受系统捕获权限限制）：{'；'.join(errors)}")
+
+    def _adb_screenshot(self, display_id: int) -> Image.Image:
+        from adbutils import adb
+        physical_id = self._physical_display_id(display_id)
+        data = adb.device(serial=self.serial).shell(
+            ["screencap", "-p", "-d", str(physical_id)], encoding=None, timeout=10,
+        )
+        with Image.open(io.BytesIO(data)) as source:
+            return source.convert("RGB")
+
+    def displays(self) -> list[int]:
+        from adbutils import adb
+        self.require_device()
+        output = adb.device(serial=self.serial).shell(["dumpsys", "display"])
+        ids = {int(value) for value in re.findall(r"(?:mDisplayId=|displayId[= ])(\d+)", output)}
+        return sorted(ids | {0})
+
+    def display_input(self, *arguments: str) -> None:
+        from adbutils import adb
+        self.require_device()
+        output = adb.device(serial=self.serial).shell(
+            ["input", "-d", str(self.display_id), *arguments],
+        )
+        if output.strip():
+            raise RuntimeError(f"屏幕输入失败：{output.strip()}")
+
+    def _physical_display_id(self, display_id: int) -> int:
+        from adbutils import adb
+        output = adb.device(serial=self.serial).shell(["dumpsys", "display"])
+        # Some IVI builds redact DisplayInfo.uniqueId but retain viewport mapping.
+        for viewport in re.findall(r"DisplayViewport\{([^}]+)\}", output):
+            logical = re.search(r"\bdisplayId=(\d+)", viewport)
+            physical = re.search(r"\buniqueId=['\"]local:(\d+)['\"]", viewport)
+            if logical and physical and int(logical.group(1)) == display_id:
+                return int(physical.group(1))
+        for block in re.split(r"(?=Display \d+:)", output):
+            if re.match(rf"Display {display_id}:", block.strip()):
+                match = re.search(r"(?:physicalDisplayId=|address\s*[=:]\s*\{?port=\d+,\s*model=\w+,\s*physicalDisplayId=)(\d+)", block)
+                if match:
+                    return int(match.group(1))
+                unique = re.search(r'uniqueId(?:[=:]|\s)\s*["\']?local:(\d+)', block)
+                if unique:
+                    return int(unique.group(1))
+        if display_id == 0:
+            return 0
+        raise RuntimeError(f"无法确定屏幕 {display_id} 的物理截图 ID；该屏幕可能是虚拟屏幕，不支持 ADB 截图")
 
     @staticmethod
     def _bounds(value: Any) -> dict[str, int] | None:
@@ -132,7 +207,7 @@ class Inspector:
             result["centerY"] = (box["top"] + box["bottom"]) / 2
         return result
 
-    def hierarchy(self, xml: str | None = None) -> dict[str, Any]:
+    def hierarchy(self, xml: str | None = None, display_id: int | None = None) -> dict[str, Any]:
         if xml is None:
             xml = self.require_device().dump_hierarchy()
         root = ET.fromstring(xml)
@@ -164,18 +239,21 @@ class Inspector:
         self._attach_unique_selectors(all_nodes)
         visible_nodes = set()
 
-        def retain_primary_display(item: dict[str, Any], inherited_display: str = "0") -> bool:
+        selected_display = str(getattr(self, "display_id", 0) if display_id is None else display_id)
+
+        def retain_display(item: dict[str, Any], inherited_display: str = "0") -> bool:
             display = str(item.get("display-id", inherited_display))
-            if display != "0":
+            is_container = item is tree and item["nodeName"] == "hierarchy" and "display-id" not in item
+            if not is_container and display != selected_display:
                 return False
             visible_nodes.add(id(item))
             item["children"] = [
-                child for child in item["children"] if retain_primary_display(child, display)
+                child for child in item["children"] if retain_display(child, display)
             ]
             return True
 
         # Keep original XML positions and globally unique selectors for native u2 lookup.
-        if not retain_primary_display(tree):
+        if not retain_display(tree):
             tree = None
         elements = [item for item in elements if id(item) in visible_nodes]
         return {"elements": elements, "tree": tree, "empty": not elements, "node_count": len(visible_nodes)}
@@ -365,6 +443,8 @@ class Inspector:
         return results
 
     def search(self, query: str) -> list[dict[str, Any]]:
+        if self.display_id:
+            return self.resolve_display(query)
         matches = self._resolve(query)
         hierarchy = self.hierarchy()["elements"]
         for match in matches:
@@ -386,6 +466,12 @@ class Inspector:
                 match["xpath"] = exact["xpath"]
                 match["u2Selector"] = exact["u2Selector"]
         return matches
+
+    def resolve_display(self, query: str) -> list[dict[str, Any]]:
+        from .inspection import InspectionStore
+        xml = self.require_device().dump_hierarchy()
+        hierarchy = self.hierarchy(xml)
+        return InspectionStore.search_hierarchy(xml, hierarchy["elements"], query)
 
     def element_for_point(self, x: int, y: int) -> dict[str, Any]:
         candidates = [
@@ -424,7 +510,7 @@ class Inspector:
             else:
                 if not selector:
                     raise ValueError("元素截图需要 selector 或 XPath")
-                elements = self._resolve(selector)
+                elements = self.resolve_display(selector) if self.display_id else self._resolve(selector)
                 if not elements:
                     raise LookupError("未找到匹配元素")
                 bounds = self._bounds(elements[0].get("bounds"))
