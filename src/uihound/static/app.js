@@ -22,6 +22,7 @@ const state = {
   connectionEpoch: 0,
   mode: 'hierarchy',
   snapshotId: null,
+  snapshotStale: false,
   captureSerial: 0,
   capturing: false,
   regionVersion: 0,
@@ -37,9 +38,12 @@ const state = {
   importSelection: {},
 };
 
+const outerDividerWidth = 8;
+const inspectorDividerWidth = 8;
+const inspectorBorderWidth = 2;
 const layoutLimits = {
-  preview: { min: 48, initial: Math.round(Math.max(1000, innerWidth) * .28) },
-  inspector: { min: 48, initial: 340 },
+  preview: { min: 48, initial: Math.round(Math.max(1000, innerWidth) * .31) },
+  inspector: { min: 48, initial: 360 },
 };
 const layoutWidths = {
   preview: layoutLimits.preview.initial,
@@ -122,9 +126,11 @@ function loadLayoutWidths() {
 function clampLayoutWidth(panel, width) {
   const limits = layoutLimits[panel];
   const workspace = $('.workspace');
-  const total = workspace ? workspace.clientWidth - 32 : innerWidth - 32;
-  const reserved = panel === 'preview' ? layoutLimits.inspector.min : layoutWidths.preview;
-  const max = Math.max(limits.min, total - reserved - 48);
+  const total = workspace ? workspace.clientWidth : innerWidth;
+  const reserved = panel === 'preview'
+    ? outerDividerWidth + inspectorBorderWidth + layoutLimits.inspector.min + inspectorDividerWidth + layoutLimits.inspector.min
+    : layoutWidths.preview + outerDividerWidth + inspectorBorderWidth + inspectorDividerWidth + layoutLimits.preview.min;
+  const max = Math.max(limits.min, total - reserved);
   return Number.isFinite(width) ? Math.min(max, Math.max(limits.min, width)) : Math.min(max, limits.initial);
 }
 
@@ -184,8 +190,8 @@ function bindPanelResize() {
       if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
       event.preventDefault();
       const sign = event.key === 'ArrowRight' ? 1 : -1;
-      const direction = sign;
       const panel = handle.dataset.resize;
+      const direction = sign;
       layoutWidths[panel] = clampLayoutWidth(panel, layoutWidths[panel] + direction * (event.shiftKey ? 30 : 10));
       applyLayoutWidths();
       saveLayoutWidths();
@@ -202,6 +208,7 @@ function setConnection(connected, serial = '') {
   $('#disconnect-device').disabled = !connected;
   $('#display-id').disabled = !connected && !state.importedFiles;
   document.querySelectorAll('[data-device]').forEach((button) => { button.disabled = !connected; });
+  updateSnapshotNotice();
   if (!connected && state.mode === 'remote' && state.lastInspection) {
     state.remote?.stop();
     state.remote = null;
@@ -232,6 +239,8 @@ function setConnection(connected, serial = '') {
     cancelPointer();
     stopScreenStream();
     state.snapshotId = null;
+    state.snapshotStale = false;
+    updateSnapshotNotice();
     state.captureSerial += 1;
     state.capturing = false;
     state.mode = 'hierarchy';
@@ -290,6 +299,7 @@ async function showInspection(result) {
   state.frozen = false;
   state.regionMode = false;
   clearRegion();
+  state.snapshotStale = result === state.lastInspection && state.snapshotStale;
   state.snapshotId = result.snapshot_id;
   state.lastInspection = result;
   state.mode = 'hierarchy';
@@ -311,7 +321,23 @@ async function showInspection(result) {
   activateTab('detail');
   updateLocatorButton();
   updateOfflineControls();
+  updateSnapshotNotice();
   updateOverlay();
+}
+
+function updateSnapshotNotice() {
+  const notice = $('#snapshot-notice');
+  notice.classList.toggle('hidden', !state.snapshotId || state.mode === 'remote');
+  notice.classList.toggle('stale', state.snapshotStale);
+  const source = state.connected ? '静态快照' : state.importedFiles ? '离线导入' : '离线快照';
+  const capturedAt = state.lastInspection?.captured_at;
+  const time = capturedAt ? ` · ${new Date(capturedAt).toLocaleTimeString()}` : '';
+  $('#snapshot-status').textContent = state.snapshotStale
+    ? `${source}已过期 · ${state.connected ? '设备画面可能已变化，请刷新后分析' : '保留断开前画面，可继续分析'}`
+    : `${source}${time} · ${state.connected ? '页面变化后请刷新' : '不会操作设备'}`;
+  $('#snapshot-status').title = $('#snapshot-status').textContent;
+  $('#refresh-snapshot').classList.toggle('hidden', !state.connected);
+  $('#refresh-snapshot').disabled = !state.connected || state.capturing;
 }
 
 async function applyDisplay() {
@@ -463,8 +489,7 @@ function stopScreenStream() {
   state.width = 0;
   state.height = 0;
   state.frozen = false;
-  $('#freeze-screen').textContent = '冻结画面';
-  $('#freeze-screen').setAttribute('aria-pressed', 'false');
+  updateFreezeButton();
   $('#stream-status').textContent = '实时画面未连接';
   $('#stream-status').classList.remove('live', 'frozen');
 }
@@ -502,7 +527,9 @@ async function switchMode(mode) {
   state.capturing = mode !== 'remote';
   $('#screen-message').textContent = '';
   if (mode === 'remote') {
+    state.snapshotStale = Boolean(state.lastInspection);
     state.snapshotId = null;
+    updateSnapshotNotice();
     $('#stream-status').textContent = '正在启动 scrcpy…';
     state.remote = new window.ScrcpyRemote({
       frame: (frame) => {
@@ -527,6 +554,7 @@ async function switchMode(mode) {
     return;
   }
   activateTab(mode === 'color' ? 'color' : 'detail');
+  updateSnapshotNotice();
   $('#stream-status').textContent = '正在获取快照…';
   try {
     const result = await api('/internal/capture', { method: 'POST', body: JSON.stringify({ hierarchy: mode === 'hierarchy' }) });
@@ -538,6 +566,7 @@ async function switchMode(mode) {
     state.displayId = result.display_id ?? state.displayId;
     $('#display-id').value = state.displayId;
     state.snapshotId = result.snapshot_id;
+    state.snapshotStale = false;
     clearSelection();
     state.matches = [];
     renderResults();
@@ -578,7 +607,10 @@ async function switchMode(mode) {
     $('#stream-status').textContent = '获取失败，请刷新';
     toast(`获取画面失败：${error.message}`);
   } finally {
-    if (requestId === state.captureSerial) state.capturing = false;
+    if (requestId === state.captureSerial) {
+      state.capturing = false;
+      updateSnapshotNotice();
+    }
   }
 }
 
@@ -625,20 +657,26 @@ function createTreeNode(element, expanded = false) {
   row.className = 'tree-row';
   row.dataset.xpath = element.xpath || '';
   const children = element.children || [];
-  const toggle = document.createElement('button');
-  toggle.className = 'tree-toggle';
-  toggle.type = 'button';
+  const toggle = document.createElement(children.length ? 'button' : 'span');
+  toggle.className = `tree-toggle${children.length ? '' : ' tree-leaf'}`;
   const isExpanded = expanded || state.treeExpanded.has(element.xpath);
   toggle.textContent = children.length ? (isExpanded ? '▾' : '▸') : '·';
-  toggle.disabled = children.length === 0;
-  toggle.setAttribute('aria-label', isExpanded ? '折叠节点' : '展开节点');
+  if (children.length) {
+    toggle.type = 'button';
+    toggle.setAttribute('aria-label', isExpanded ? '折叠节点' : '展开节点');
+    toggle.setAttribute('aria-expanded', String(isExpanded));
+  } else toggle.setAttribute('aria-hidden', 'true');
   const select = document.createElement('button');
   select.className = 'tree-select';
   select.type = 'button';
   const title = document.createElement('strong');
   title.textContent = labelFor(element);
+  title.title = title.textContent;
   const meta = document.createElement('span');
-  meta.textContent = `${element.className || element.nodeName || element.packageName || '节点'}${element.bounds ? ` · ${boundsText(element)}` : ''}`;
+  const className = element.className || element.nodeName || element.packageName || '节点';
+  meta.textContent = className;
+  meta.title = `${className}${element.bounds ? ` · ${boundsText(element)}` : ''}`;
+  select.title = `${labelFor(element)}\n${meta.title}`;
   select.append(title, meta);
   row.append(toggle, select);
   node.append(row);
@@ -646,15 +684,21 @@ function createTreeNode(element, expanded = false) {
   if (children.length) {
     const childList = document.createElement('div');
     childList.className = `tree-children${isExpanded ? '' : ' collapsed'}`;
-    children.forEach((child) => childList.append(createTreeNode(child)));
+    const populate = () => {
+      if (!childList.childElementCount) children.forEach((child) => childList.append(createTreeNode(child)));
+    };
+    if (isExpanded) populate();
     node.append(childList);
     toggle.addEventListener('click', () => {
       const isExpanded = !childList.classList.contains('collapsed');
+      if (!isExpanded) populate();
       childList.classList.toggle('collapsed', isExpanded);
       if (isExpanded) state.treeExpanded.delete(element.xpath);
       else state.treeExpanded.add(element.xpath);
       toggle.textContent = isExpanded ? '▸' : '▾';
       toggle.setAttribute('aria-label', isExpanded ? '展开节点' : '折叠节点');
+      toggle.setAttribute('aria-expanded', String(!isExpanded));
+      updateTreeHighlights();
     });
   }
   select.addEventListener('click', () => selectElement(element, 'hierarchy'));
@@ -697,20 +741,18 @@ function selectElement(element, source = 'element') {
 }
 
 function revealTreeSelection(xpath) {
+  const expandPath = (node) => {
+    if (!node) return false;
+    if (node.xpath === xpath) return true;
+    if (!(node.children || []).some(expandPath)) return false;
+    state.treeExpanded.add(node.xpath);
+    return true;
+  };
+  if (!expandPath(state.tree)) return;
+  renderHierarchy();
+  updateTreeHighlights();
   const row = [...document.querySelectorAll('.tree-row')].find((item) => item.dataset.xpath === xpath);
   if (!row) return;
-  let parent = row.parentElement.closest('.tree-node');
-  while (parent) {
-    const children = parent.querySelector(':scope > .tree-children');
-    const toggle = parent.querySelector(':scope > .tree-row > .tree-toggle');
-    if (children) children.classList.remove('collapsed');
-    if (children) state.treeExpanded.add(parent.querySelector(':scope > .tree-row')?.dataset.xpath || '');
-    if (toggle && toggle.disabled === false) {
-      toggle.textContent = '▾';
-      toggle.setAttribute('aria-label', '折叠节点');
-    }
-    parent = parent.parentElement.closest('.tree-node');
-  }
   row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
@@ -769,7 +811,12 @@ function renderDetail(element) {
       copy.type = 'button';
       copy.title = '复制属性';
       copy.setAttribute('aria-label', `复制 ${label}`);
-      copy.textContent = '⧉';
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('aria-hidden', 'true');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#i-copy');
+      icon.append(use);
+      copy.append(icon);
       copy.addEventListener('click', async () => {
         try {
           await navigator.clipboard.writeText(content.textContent);
@@ -1011,6 +1058,8 @@ async function action(action, extra = {}) {
     state.remote?.send({ type: 'key', key: action });
     return;
   }
+  const snapshotId = state.snapshotId;
+  const epoch = state.connectionEpoch;
   try {
     const routes = { click_element: 'clickElem', input: 'inputText', clear: 'clearText' };
     const result = await api(`/internal/${routes[action] || 'action'}`, {
@@ -1018,7 +1067,11 @@ async function action(action, extra = {}) {
       body: JSON.stringify({ action, ...extra }),
     });
     toast(result.message);
-    if (state.mode !== 'remote') $('#stream-status').textContent = '设备已操作 · 点击刷新更新快照';
+    if (epoch === state.connectionEpoch && snapshotId && snapshotId === state.snapshotId && state.mode !== 'remote') {
+      state.snapshotStale = true;
+      $('#stream-status').textContent = '设备已操作 · 点击刷新更新快照';
+      updateSnapshotNotice();
+    }
   } catch (error) {
     toast(`操作失败：${error.message}`);
   }
@@ -1121,9 +1174,16 @@ function updateRegionMode() {
     state.mode === 'color' ? '移动取色 · 方向键微调 · 点击确认' : 'scrcpy · 点击 / 拖动 / 双指滚动';
 }
 
+function updateFreezeButton() {
+  const button = $('#freeze-screen');
+  button.querySelector('use').setAttribute('href', state.frozen ? '#i-play' : '#i-pause');
+  button.setAttribute('aria-pressed', String(state.frozen));
+  button.setAttribute('aria-label', state.frozen ? '继续画面' : '冻结画面');
+  button.title = state.frozen ? '继续 remote 显示与触摸' : '暂停 remote 显示（暂停时不发送触摸）';
+}
+
 function updateFreezeStatus() {
-  $('#freeze-screen').textContent = state.frozen ? '▶' : 'Ⅱ';
-  $('#freeze-screen').setAttribute('aria-pressed', String(state.frozen));
+  updateFreezeButton();
   $('#stream-status').textContent = state.frozen ? '显示已暂停 · 触摸已禁用' : 'scrcpy remote';
   $('#stream-status').classList.toggle('frozen', state.frozen);
   $('#stream-status').classList.toggle('live', !state.frozen);
@@ -1336,6 +1396,7 @@ function bindEvents() {
   }));
   $('#clear-region').addEventListener('click', clearRegion);
   $('#refresh-capture').addEventListener('click', refreshScreen);
+  $('#refresh-snapshot').addEventListener('click', refreshScreen);
   $('#apply-region').addEventListener('click', () => {
     const region = Object.fromEntries(['x1', 'y1', 'x2', 'y2'].map(key => [key, $(`#region-${key}`).valueAsNumber]));
     applyRegion(region);
@@ -1522,8 +1583,7 @@ function updateLocatorButton() {
   }
   $('#mode-label').textContent = state.mode;
   $('#freeze-screen').disabled = !state.connected || state.mode !== 'remote';
-  $('#freeze-screen').textContent = 'Ⅱ';
-  $('#freeze-screen').setAttribute('aria-pressed', 'false');
+  updateFreezeButton();
   $('#screen-canvas').classList.toggle('interaction-mode', state.mode === 'remote');
   $('#click-element').disabled = !state.connected || !state.selected || state.mode !== 'hierarchy';
   $('#save-element').disabled = !state.selected || state.mode !== 'hierarchy';

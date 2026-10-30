@@ -1,182 +1,80 @@
-# UiHound · UI 猎犬
+# UiHound
 
-UiHound 是用于 Android 调试与自动化测试的网页工具。在浏览器中查看设备画面和 UI 节点、复制定位表达式、远程操作设备，并完成取色、截图与录屏。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 功能
+UiHound is a local web tool for Android debugging and UI automation. Inspect device screens and UI elements, find element locators, remotely control devices, sample colors, capture screenshots and recordings, and analyze snapshots offline.
 
-| 功能 | 说明 |
-|---|---|
-| 元素检查 | UI 节点树、节点虚线边界、选中高亮、属性与坐标展示 |
-| 元素定位 | u2 selector / XPath 搜索与复制，优先生成唯一属性定位 |
-| 远程操作 | scrcpy 实时画面，点击、拖动、长按、双指滚动、主页、返回、后台任务 |
-| 颜色取样 | 像素放大镜、坐标、HEX、RGB、HSB、OpenCV HSV，多点记录与复制 |
-| 截图 | 全屏、元素和区域截图，选区移动、缩放及坐标微调 |
-| 录屏 | 录制设备画面，保存为无音频 WebM，支持视频预览 |
-| 文件管理 | 截图与录屏列表、复制文件、删除单个或全部、打开保存目录 |
-| 工作区 | 可调节分栏、白天 / 黑夜主题、偏好记忆 |
-| 多屏设备 | 按 Display ID 获取对应画面、节点树和数量，远控与录屏跟随所选屏幕 |
-| 离线分析 | 导入图片和 XML，支持节点高亮、定位搜索、取色与裁剪；断连保留已获取快照 |
+## Features
 
-## 安装与启动
+- **Inspect elements**: Browse the UI hierarchy and view element properties, coordinates, and screen highlights.
+- **Find locators**: Search for and copy u2 selectors or XPath expressions.
+- **Control devices**: View the live device screen and perform taps, swipes, long presses, Home, Back, and other actions.
+- **Sample colors**: Inspect pixel coordinates and HEX, RGB, HSB, and HSV values.
+- **Capture screenshots and recordings**: Save full-screen, element, and region screenshots, and record device screens.
+- **Manage files**: Browse, copy, and manage screenshots and recordings.
+- **Support multiple displays**: Select an Android display to inspect and control its screen.
+- **Analyze offline**: Import an image and UI XML to inspect elements without a connected device.
 
-### 环境准备
+## Requirements
 
-- Python 3.10 或以上版本。
-- Android Platform Tools，确保 `adb` 已加入 PATH。
-- macOS、Windows 或 Linux；新版 Chrome 或 Edge，使用本机地址访问。
-- Android 设备开启 USB / 无线调试，并接受调试授权。
+- Python 3.10 or later.
+- Android Platform Tools, with `adb` available on your `PATH`.
+- An Android device with USB or wireless debugging enabled and authorized.
+- macOS, Windows, or Linux. A recent version of Chrome or Edge is recommended.
 
-在终端执行 `adb devices`，确认设备状态为 `device`。无线连接可先执行 `adb connect 地址:端口`。
+Before connecting a device, verify that ADB can detect it:
 
-### 安装
+```shell
+adb devices
+```
 
-安装并启动：
+The device status should be `device`. For wireless debugging, connect first:
 
-```powershell
+```shell
+adb connect HOST:PORT
+```
+
+## Install and run
+
+Install UiHound from PyPI and start it:
+
+```shell
 pip install uihound
 uihound
 ```
 
-服务启动后自动打开 `http://127.0.0.1:8000`。顶部设备框既可下拉选择扫描到的设备，也可直接编辑序列号 / IP:端口；点击“连接设备”或回车连接，扫描不会覆盖已输入的地址。
+The service opens a browser at `http://127.0.0.1:8000` by default. Select or enter an ADB device at the top of the page, then click **Connect Device**.
 
-启动参数：
+### Command-line options
 
-```powershell
-# 指定端口
+```shell
+# Choose a port
 uihound --port 8080
 
-# 不自动打开浏览器
+# Do not open a browser automatically
 uihound --no-browser
+
+# Show the installed version
+uihound --version
 ```
 
-升级到新版本：
+Upgrade to the latest version:
 
-```powershell
+```shell
 pip install --upgrade uihound
 ```
 
-升级后重启 `uihound`，刷新网页即可。
+After upgrading, restart the UiHound service and refresh the page.
 
-网页顶部显示当前运行版本，也可在终端查询（不会启动服务）：
+## Run from source
+
+Clone the repository, then run these commands from its root directory:
 
 ```shell
-uihound --version
-# 或 uihound -V
-```
-
-## 使用方法
-
-### 检查元素：hierarchy
-
-点击设备画面上方的 hierarchy 图标，获取当前截图和 UI 节点树。点击画面或树节点查看属性，复制定位表达式；也可在搜索框输入 selector 或 XPath：
-
-```python
-resourceId="com.example:id/title"
-text="设置"
-//*[@resource-id="com.example:id/title"]
-```
-
-XPath 优先使用当前层级中唯一的 `resource-id`、`content-desc`、`text`，没有可用唯一属性时才使用层级路径。
-
-**hierarchy 是静态快照，设备页面变化后需点击刷新。** 动画结束、画面稳定后再获取，便于对齐画面和节点。节点虚线默认展示，可用画面上方的边框按钮显示或隐藏。辅助线会过滤无文字、描述或交互能力的布局容器；节点树仍保留完整信息，选中容器时仍可高亮。
-
-连接设备时自动读取可用的 Display ID，在顶部设备选择框后面的 Display 下拉框选择屏幕即可，无需手动输入编号，默认选择 `0（主屏）`。画面、节点树、节点数、远控及录屏跟随所选屏幕，切屏会先停止并保存录屏。节点按 `display-id` 筛选，未标注的节点继承父节点；原始 XML 层级路径不变。
-
-截图会自动依次尝试多种方式：主屏先使用 uiautomator2；副屏或前一方式失败时，按逻辑 ID 与物理 ID 的映射调用 ADB `screencap`（兼容车机 `DisplayViewport` 映射）；仍失败则使用内置 scrcpy 捕获所选逻辑屏幕的原始分辨率视频帧，PyAV 在本机解码，无需另装 FFmpeg 命令。scrcpy 视频帧有编码损耗，转为 PNG 不会消除这些损耗，精确取色时请注意。回退不会改用主屏；全部失败时报告各方式的错误。受保护内容或厂商禁止捕获的屏幕仍可能无法获取。副屏导航和触摸使用对应屏幕输入，暂不支持 u2 文本输入及清空。
-
-### 导入与离线分析
-
-点击顶部“保存分析”，将当前 hierarchy 快照的图片与原始 XML 成对保存；离线导入的快照也可保存。remote / 在线 color 模式下会重新获取一次图片与层级，避免使用不同时间的画面和 XML。默认目录为项目根目录下独立的 `snapshots`，与 `screenshots` 截图目录并列。每次创建 `capture_时间_display_编号_随机后缀` 子文件夹，内含 `screen.png`、`hierarchy.xml` 和记录 Display ID 的 `metadata.json`，不会覆盖旧文件。
-
-点击顶部“导入”，分别点击“选择图片”和“选择 XML”，在系统文件选择窗口中手动选取文件，两项就绪后点击“导入”。两个按钮独立工作，不会选完图片自动弹出 XML 窗口；不再展示历史快照列表。系统窗口打开在服务所在电脑，默认从快照目录开始，可在设置中单独修改导入目录。选择已保存快照的子文件夹中的 `screen.png` 和 `hierarchy.xml` 即可重新分析。
-
-导入仅保留“选择图片”和“选择 XML”两个系统选择按钮，不再重复提供浏览器上传入口。每次打开时读取当前已保存的导入路径；Windows 使用禁用历史目录恢复的系统窗口，从配置目录开始，而不是浏览器记住的位置；macOS 使用系统自带的 `osascript` 打开原生文件选择窗口，无需 tkinter 或额外 Python 依赖。服务需运行在本机桌面会话，Linux 仍需安装 tkinter。图片与 XML 应来自同一画面、使用相同坐标；导入后自动从 XML 提取 Display ID，供下拉选择筛选节点（不会改变导入图片）。图片上限 24 MiB、3200 万像素，XML 上限 8 MiB，不接受 DTD 或实体定义。
-
-导入成功后进入离线分析并断开当前设备，防止误操作真机。可查看节点树与高亮、搜索 selector / XPath、取色、保存全屏或元素 / 区域截图，无需连接设备。
-
-主动断开或设备掉线时，已获取的静态画面、节点和选中属性会保留；远控断连时恢复最近一次静态快照。离线状态禁用设备操作。快照保存在当前服务内存中，最多保留 8 份、有效期 30 分钟；重新连接、刷新网页或重启服务后需重新获取或导入。
-
-### 操作设备：remote
-
-点击 remote 图标进入实时操作模式。鼠标点击对应轻触，按住对应长按，拖动或触摸板双指滚动对应滑动。侧栏提供主页、返回、后台任务等操作。
-
-点击冻结按钮暂停网页画面，暂停期间禁用触摸，再次点击恢复。文本输入在“常用操作”页完成，支持 `Ctrl+Enter` 发送。
-
-安装包已内置官方 scrcpy-server v3.3.4，启动 remote 和录屏无需访问 GitHub。程序会校验文件完整性；如需使用自备文件，可通过 `UIHOUND_SCRCPY_SERVER` 指定同版本官方文件的路径。该组件按 Apache-2.0 许可证分发，许可证及来源说明随包附带。
-
-### 取色：color
-
-点击 color 获取当前画面，移动鼠标查看像素与颜色值。ADB 截图为无损 PNG；若自动回退到 scrcpy，状态栏会标明“有损取帧”，不宜用于严格像素比对。方向键微调 1px，`Shift+方向键` 微调 10px；点击或按 Enter 保存取样。最新记录置顶，每项可单独复制。
-
-刷新或切换画面会清除取样记录。OpenCV HSV 为范围换算值，边界颜色可能存在 1 个单位的舍入差异。
-
-### 截图与文件管理
-
-通过侧栏保存全屏截图，或选中元素后点击“元素截图”。区域截图先点击框选按钮，再拖出选区；可拖动选区、调整八个边角、输入坐标或用方向键微调。保存成功后自动清除选区。
-
-hierarchy / color 截取当前静态画面；remote 全屏截图获取设备当前画面。截图不会包含节点边框。
-
-在“截图”页查看缩略图、复制或删除文件；保存目录统一在右上角齿轮“设置”中修改。**删除会真实移除磁盘文件，操作前会确认；删除全部仅针对当前列表，不递归删除子目录。**
-
-“复制文件”后可在目标文件夹使用系统粘贴快捷键（Windows `Ctrl+V`，macOS `Command+V`）粘贴。“打开目录”直接打开保存位置。这两项需要浏览器和服务运行在同一台电脑；文件剪贴板复制支持 Windows 和 macOS，Linux 暂不支持。
-
-### 录屏
-
-点击侧栏圆形录屏按钮开始，再次点击停止并保存；非 remote 模式会自动连接 remote 后开始录制。
-
-录屏默认保存在项目根目录下的 `recordings` 文件夹。“录屏”页支持播放、复制文件、删除和打开目录，路径统一在“设置”中修改。录制内容不包含节点边框；冻结网页画面时仍会录制设备新帧。
-
-切换模式或断开设备会停止并保存录屏。录屏接近 240 MiB 时自动停止。**关闭网页前请等待保存完成**；上传失败可在录屏页重试，强制关闭或刷新会丢失未保存的视频。
-
-## 常用设置
-
-右上角齿轮打开设置页，集中配置项目根目录及各子功能的路径。默认项目根目录为用户主目录下的 `UiHound`：
-
-| 项目 | 默认位置 |
-|---|---|
-| 截图 | 项目根目录下 `screenshots` |
-| 录屏 | 项目根目录下 `recordings` |
-| 分析快照（XML + 图片） | 项目根目录下 `snapshots` |
-| 导入文件选择窗口 | 跟随快照目录 |
-
-设置输入框直接显示实际生效路径，可直接编辑；子功能路径清空后恢复跟随默认位置，也可指定绝对路径或相对项目根目录的路径。截图与快照目录必须独立，不能相同或互为子目录；导入默认跟随快照目录。修改项目根目录时，未自定义的路径同步变化。点击“保存设置”后立即生效并持久保存在 `用户主目录\UiHound\settings.json`，重启仍生效，配置文件位置不随项目路径迁移。录屏未保存时须先处理录屏再改设置。已有文件不会自动移动或删除，旧截图目录中的分析快照仍保留，可手动选择文件导入。
-
-也可在启动前通过环境变量设置初始目录或画质，设置页保存的路径优先：
-
-```powershell
-$env:UIHOUND_PROJECT_DIR = "D:\UiHoundData"
-$env:UIHOUND_SNAPSHOT_DIR = "D:\UiHoundData\screenshots"
-$env:UIHOUND_RECORDING_DIR = "D:\UiHoundData\recordings"
-$env:UIHOUND_INSPECTION_DIR = "D:\UiHoundData\snapshots"
-$env:UIHOUND_SCRCPY_MAX_SIZE = "1920"
-$env:UIHOUND_SCRCPY_MAX_FPS = "60"
-$env:UIHOUND_SCRCPY_BIT_RATE = "8000000"
+python -m pip install .
 uihound
 ```
 
-默认位置不受启动目录或安装目录影响。系统文件选择窗口和目录设置仅允许通过服务所在电脑的本机同源网页操作。
+## Network security
 
-remote 默认最长边 1920、目标 60 fps、码率 8 Mbps；实际流畅度取决于设备与连接状况。
-
-首次打开默认使用白天主题；太阳 / 月亮按钮可切换主题，浏览器会记住主题偏好。拖动分隔条调整设备、属性和节点树区域，顶部可重置布局。
-
-## 自动化调用
-
-| 请求 | 参数 |
-|---|---|
-| `GET /device/status` | 设备连接状态 |
-| `GET /snapshot/full` | 可选 `save_dir`、`filename` |
-| `GET /snapshot/element` | 必填 `selector`；可选 `save_dir`、`filename` |
-| `GET /snapshot/region` | 必填 `x1`、`y1`、`x2`、`y2`；可选 `save_dir`、`filename` |
-
-截图接口返回 `success`、`file_path`、`base64`、`timestamp`。`save_dir` 必须位于截图根目录内，`filename` 为 `.png` 文件名；同名文件不会覆盖。
-
-服务用于本机调试，请勿直接暴露到不受信任的网络。
-
-## 发布新版本
-
-维护者在需要发布的 PR 中修改 `src\uihound\__init__.py` 的 `__version__`，使用尚未发布的新版本号。合入 `master` 后，GitHub Actions 自动运行测试、构建安装包，并通过 PyPI Trusted Publishing 发布。
-
-工作流文件为 `.github\workflows\publish.yml`，GitHub Environment 为 `pypi`，须与 PyPI 配置一致。如果该版本已发布，流水线只运行测试并跳过发布；无需发版的修改不必调整版本号。也可在 GitHub Actions 中选择 `master` 手动运行此工作流。
-
-发布成功后，用户执行 `pip install --upgrade uihound`，重启服务并刷新网页即可使用新版本。首次安装仍使用 `pip install uihound`。第三方镜像源可能存在同步延迟。
+UiHound is intended for local debugging. Do not expose the service directly to an untrusted network.
