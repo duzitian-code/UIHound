@@ -52,6 +52,8 @@ class Handler(SimpleHTTPRequestHandler):
                 '<script src="/static/app.js"></script>',
                 '<script>' + (TEST_DIR / "browser_fixture.js").read_text(encoding="utf-8") +
                 '</script><script src="/static/app.js"></script><script>' +
+                (TEST_DIR / "ui_quality_assertions.js").read_text(encoding="utf-8") +
+                '\n' +
                 (TEST_DIR / "remote_assertions.js").read_text(encoding="utf-8") +
                 '\n' + (TEST_DIR / "browser_assertions.js").read_text(encoding="utf-8") + '</script>',
             )
@@ -81,6 +83,8 @@ class BrowserTests(unittest.TestCase):
                 (1920, 1080, "dark"), (1280, 720, "dark"),
                 (1920, 1080, "light"), (1280, 720, "light"),
                 (1920, 1080, "default"),
+                (1000, 720, "light"), (1440, 900, "dark"),
+                (1280, 600, "light"),
             ]:
                 case = os.environ.get("UIHOUND_BROWSER_CASE")
                 if case and case != f"{width}x{height}-{theme}":
@@ -126,6 +130,9 @@ class BrowserTests(unittest.TestCase):
                                         return result["result"]
                             command("Page.enable", {})
                             command("Emulation.setFocusEmulationEnabled", {"enabled": True})
+                            command("Emulation.setDeviceMetricsOverride", {
+                                "width": width, "height": height, "deviceScaleFactor": 1, "mobile": False,
+                            })
                             if theme != "default":
                                 command("Page.addScriptToEvaluateOnNewDocument", {"source": f"localStorage.setItem('uihound-theme', '{theme}');"})
                             command("Page.navigate", {"url": f"http://127.0.0.1:{server.server_port}"})
@@ -135,7 +142,7 @@ class BrowserTests(unittest.TestCase):
                                 "expression": "new Promise((resolve) => { const start = Date.now(); const timer = setInterval(() => { if (document.body?.dataset.result || Date.now() - start > 60000) { clearInterval(timer); resolve(document.body?.dataset.result || 'TIMEOUT: ' + (window.fixtureErrors || []).join(';')); } }, 100); })",
                                 "awaitPromise": True, "returnByValue": True,
                             })
-                            diagnostic = command("Runtime.evaluate", {"expression": "JSON.stringify({href:location.href,phase:document.body.dataset.phase,result:document.body.dataset.result,theme:document.documentElement.dataset.theme,storedTheme:localStorage.getItem('uihound-theme'),themeError:window.UiHoundTheme?.error,errors:window.fixtureErrors,requests:window.fixtureRequests?.slice(-4)})", "returnByValue": True})
+                            diagnostic = command("Runtime.evaluate", {"expression": "JSON.stringify({href:location.href,phase:document.body.dataset.phase,result:document.body.dataset.result,theme:document.documentElement.dataset.theme,storedTheme:localStorage.getItem('uihound-theme'),themeError:window.UiHoundTheme?.error,errors:window.fixtureErrors,requests:window.fixtureRequests?.slice(-4).map(request => request.url)})", "returnByValue": True})
                             command("Runtime.evaluate", {
                                 "expression": "(async () => { if (state.recorder) { await state.recorder.stop(); state.recorder.unsaved = null; } })()",
                                 "awaitPromise": True,
