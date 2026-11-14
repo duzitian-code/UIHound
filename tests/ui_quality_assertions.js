@@ -104,6 +104,36 @@ async function uiQualityTests() {
 
   const originalTree = state.tree;
   const originalExpanded = state.treeExpanded;
+  const treeForExpansion = {
+    xpath: '/expansion', children: [
+      {xpath: '/expansion/first', children: [
+        {xpath: '/expansion/first/selected-parent', children: [
+          {xpath: '/expansion/first/selected', text: '目标节点', children: []},
+        ]},
+        {xpath: '/expansion/first/unrelated', children: [
+          {xpath: '/expansion/first/unrelated/child', children: []},
+        ]},
+      ]},
+      {xpath: '/expansion/second', children: [
+        {xpath: '/expansion/second/manual', children: [
+          {xpath: '/expansion/second/manual/child', children: []},
+        ]},
+      ]},
+    ],
+  };
+  state.tree = treeForExpansion;
+  state.treeExpanded = collectExpandedNodes(state.tree);
+  renderHierarchy();
+  const findRow = xpath => [...$('#tree-list').querySelectorAll('.tree-row')].find(row => row.dataset.xpath === xpath);
+  assert(state.treeExpanded.size === 3, 'initial expansion is limited to the first two levels');
+  assert(findRow('/expansion/first/unrelated').querySelector('.tree-toggle').getAttribute('aria-expanded') === 'false', 'unrelated unnamed branches start collapsed');
+  findRow('/expansion/second/manual').querySelector('.tree-toggle').click();
+  selectElement(treeForExpansion.children[0].children[0].children[0], 'search');
+  assert(findRow('/expansion/first/selected'), 'selection expands the necessary ancestor path');
+  assert(findRow('/expansion/first/unrelated').querySelector('.tree-toggle').getAttribute('aria-expanded') === 'false', 'selection leaves unrelated branches collapsed');
+  assert(findRow('/expansion/second/manual').querySelector('.tree-toggle').getAttribute('aria-expanded') === 'true', 'selection preserves manually expanded branches');
+  assert(!findRow('/expansion/first/unrelated/child'), 'collapsed branches remain unbuilt after selection');
+
   const leaves = Array.from({length: 3000}, (_, index) => ({
     ...fixtureElement, xpath: `/quality/group/node[${index + 1}]`, children: [],
   }));
@@ -128,6 +158,35 @@ async function uiQualityTests() {
   assert(selectedRow && selectedRow.getBoundingClientRect().height > 0, 'search reveals selections in unbuilt collapsed branches');
   assert([...$('#tree-list').querySelectorAll('button.tree-toggle')].every(button => button.getAttribute('aria-expanded') === 'true'), 'revealing a selection updates all ancestor expansion states');
   document.body.dataset.collapsedTreeRenderMs = elapsed.toFixed(2);
+
+  let deepNode = {...fixtureElement, xpath: '/deep/leaf', text: '深层节点', children: []};
+  const deepLeaf = deepNode;
+  for (let depth = 35; depth >= 0; depth--) {
+    deepNode = {xpath: `/deep/${depth}`, text: `第 ${depth} 层`, children: [deepNode]};
+  }
+  state.tree = deepNode;
+  state.treeExpanded = new Set();
+  renderHierarchy();
+  const treeList = $('#tree-list');
+  treeList.scrollLeft = 0;
+  selectElement(deepLeaf, 'search');
+  const deepRow = [...treeList.querySelectorAll('.tree-row')].find(row => row.dataset.xpath === deepLeaf.xpath);
+  const treeRect = treeList.getBoundingClientRect();
+  assert(deepRow.getBoundingClientRect().top >= treeRect.top - 1, 'deep selection is not clipped above the tree');
+  assert(deepRow.getBoundingClientRect().bottom <= treeRect.top + treeList.clientHeight + 1, 'deep selection is scrolled into view vertically');
+  assert(treeList.scrollWidth > treeList.clientWidth, 'deep trees can be navigated horizontally without crushing labels');
+  assert(deepRow.getBoundingClientRect().width >= 150, 'deep node retains enough width for its label');
+  assert(deepRow.getBoundingClientRect().left < treeRect.left + treeList.clientWidth, 'offscreen deep selection is brought into view horizontally');
+  treeList.scrollLeft = treeList.scrollWidth;
+  const horizontalPosition = treeList.scrollLeft;
+  assert(horizontalPosition > 0, 'deep tree allows manual horizontal scrolling');
+  assert(deepRow.getBoundingClientRect().right <= treeRect.left + treeList.clientWidth + 1, 'manual horizontal scrolling reveals the complete deep row');
+  selectElement(deepLeaf, 'search');
+  assert(treeList.scrollLeft === horizontalPosition, 'revealing a selection preserves manual horizontal position');
+  treeList.scrollLeft = 0;
+  selectElement(state.tree, 'search');
+  assert(treeList.scrollLeft === 0, 'revealing a visible node does not hide the left side of the tree');
+
   state.tree = originalTree;
   state.treeExpanded = originalExpanded;
   clearSelection();

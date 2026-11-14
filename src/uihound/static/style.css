@@ -98,7 +98,7 @@ h1 { font-size: 14px; font-weight: 600; } h2 { font-size: 13px; font-weight: 600
 .tree-tools .icon-button { width: 24px; height: 24px; }
 .element-list { flex: 1; min-height: 0; overflow: auto; padding: 7px; scrollbar-width: thin; overscroll-behavior: contain; }
 .tree-node, .tree-row { min-width: 0; }
-.tree-row { position: relative; display: flex; align-items: stretch; border-radius: 2px; min-height: 46px; }
+.tree-row { position: relative; display: flex; align-items: stretch; border-radius: 2px; min-width: 150px; min-height: 46px; }
 .tree-row:hover { background: var(--hover); }
 .tree-row.matched { background: var(--hover); box-shadow: inset 1px 0 var(--accent); }
 .tree-row.active { background: var(--active); box-shadow: inset 2px 0 var(--red); }
