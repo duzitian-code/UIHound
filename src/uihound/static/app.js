@@ -643,8 +643,9 @@ function countTreeNodes(node) {
 function collectExpandedNodes(node) {
   const expanded = new Set();
   const visit = (current, depth) => {
-    if ((depth < 2 || (!current.text && !current.resourceId)) && current.children?.length) expanded.add(current.xpath);
-    current.children?.forEach((child) => visit(child, depth + 1));
+    if (depth >= 2 || !current.children?.length) return;
+    expanded.add(current.xpath);
+    current.children.forEach((child) => visit(child, depth + 1));
   };
   if (node) visit(node, 0);
   return expanded;
@@ -749,11 +750,23 @@ function revealTreeSelection(xpath) {
     return true;
   };
   if (!expandPath(state.tree)) return;
+  const list = $('#tree-list');
+  const scrollLeft = list.scrollLeft;
   renderHierarchy();
   updateTreeHighlights();
-  const row = [...document.querySelectorAll('.tree-row')].find((item) => item.dataset.xpath === xpath);
+  list.scrollLeft = scrollLeft;
+  const row = [...list.querySelectorAll('.tree-row')].find((item) => item.dataset.xpath === xpath);
   if (!row) return;
-  row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const top = listRect.top + list.clientTop;
+  const bottom = top + list.clientHeight;
+  if (rowRect.top < top) list.scrollTop += rowRect.top - top;
+  else if (rowRect.bottom > bottom) list.scrollTop += rowRect.bottom - bottom;
+  const left = listRect.left + list.clientLeft;
+  const right = left + list.clientWidth;
+  if (rowRect.left >= right) list.scrollLeft += rowRect.right - right;
+  else if (rowRect.right <= left) list.scrollLeft += rowRect.left - left;
 }
 
 function renderDetail(element) {
